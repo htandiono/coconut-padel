@@ -23,10 +23,10 @@ export function CoconutMark({ className }: { className?: string }) {
   );
 }
 
-export function BrandHeader({ compact = false }: { compact?: boolean }) {
+export function BrandHeader() {
   return (
-    <header className="flex items-center justify-between gap-4">
-      <Link href="/" className="flex items-center gap-3">
+    <header>
+      <Link href="/" className="flex w-fit items-center gap-3">
         <CoconutMark className="size-10 shrink-0" />
         <div>
           <p className="font-heading text-xl leading-none tracking-tight text-primary sm:text-2xl">
@@ -37,11 +37,6 @@ export function BrandHeader({ compact = false }: { compact?: boolean }) {
           </p>
         </div>
       </Link>
-      {!compact ? (
-        <p className="hidden max-w-xs text-right text-xs text-muted-foreground sm:block">
-          Matchmaker Americano untuk klub yang main dulu, pemain telat menyusul.
-        </p>
-      ) : null}
     </header>
   );
 }

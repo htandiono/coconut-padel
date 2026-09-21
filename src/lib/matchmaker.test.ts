@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateRound } from "./matchmaker";
+import { generateRound, type PastMatch } from "./matchmaker";
 import { computeStandings, isValidAmericanoScore } from "./scoring";
 
 describe("americano scoring", () => {
@@ -85,5 +85,53 @@ describe("americano matchmaker", () => {
     ];
     expect(playing).toContain("telat");
     expect(next.sittingOut).not.toContain("telat");
+  });
+
+  it("menyebar repeat pairing rata saat pemain sedikit dan ronde banyak", () => {
+    const players = ["a", "b", "c", "d"].map((id) => ({ id, present: true }));
+    const past: PastMatch[] = [];
+    const pairCounts = new Map<string, number>();
+
+    for (let round = 1; round <= 6; round += 1) {
+      const generated = generateRound({
+        players,
+        courtCount: 1,
+        pastMatches: past,
+        roundNumber: round,
+      });
+      const match = generated.matches[0];
+      past.push({ teamA: match.teamA, teamB: match.teamB });
+      for (const team of [match.teamA, match.teamB]) {
+        const key = [...team].sort().join("-");
+        pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+      }
+    }
+
+    // 4 pemain punya 6 kemungkinan pasangan; setelah 6 ronde semua harus
+    // terpakai tepat 2 kali — tidak ada pasangan yang diulang berlebihan.
+    expect(pairCounts.size).toBe(6);
+    for (const count of pairCounts.values()) {
+      expect(count).toBe(2);
+    }
+  });
+
+  it("memilih pasangan yang paling jarang dipasangkan", () => {
+    const past: PastMatch[] = [
+      { teamA: ["a", "b"], teamB: ["c", "d"] },
+      { teamA: ["a", "b"], teamB: ["c", "d"] },
+      { teamA: ["a", "c"], teamB: ["b", "d"] },
+    ];
+    const next = generateRound({
+      players: ["a", "b", "c", "d"].map((id) => ({ id, present: true })),
+      courtCount: 1,
+      pastMatches: past,
+      roundNumber: 4,
+    });
+    const teams = [next.matches[0].teamA, next.matches[0].teamB].map((team) =>
+      [...team].sort().join("-"),
+    );
+    // a-d dan b-c belum pernah sepasangan, jadi harus dipilih.
+    expect(teams).toContain("a-d");
+    expect(teams).toContain("b-c");
   });
 });

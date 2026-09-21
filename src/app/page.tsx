@@ -1,6 +1,12 @@
 import { BrandHeader } from "@/components/brand-header";
 import { CreateTournamentForm } from "@/components/create-tournament-form";
 
+const FEATURES = [
+  ["Skor Americano", "Skor tim langsung jadi poin tiap pemain."],
+  ["Telat? Aman", "Main jalan duluan. Yang telat diprioritaskan begitu datang."],
+  ["Satu tautan", "Semua bisa pantau match dan klasemen live."],
+] as const;
+
 export default function HomePage() {
   return (
     <div className="court-grid min-h-full">
@@ -9,25 +15,19 @@ export default function HomePage() {
         <section className="grid items-start gap-10 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="space-y-6">
             <p className="inline-flex rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-primary">
-              Americano dulu · multi lapangan
+              Americano · multi lapangan
             </p>
             <h1 className="font-heading text-4xl leading-tight tracking-tight sm:text-6xl">
               Main dulu.
               <span className="block text-primary">Yang telat menyusul.</span>
             </h1>
             <p className="max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
-              Coconut Padel mengatur pertandingan Americano seperti PDLUP: setiap rally jadi poin
-              individual, pasangan berputar, dan klasemen langsung kelihatan. Bedanya, pemain yang
-              datang belakangan tidak membuat lapangan menganggur — mereka diprioritaskan sampai
-              jumlah match-nya kejar.
+              Pasangan berputar tiap match, skor tim jadi poin pribadi, klasemen live.
+              Court kosong langsung diisi match berikutnya — nggak ada yang nganggur.
             </p>
             <div className="grid gap-3 sm:grid-cols-3">
-              {[
-                ["Poin Americano", "Skor tim dijumlahkan 16/21/24/32, lalu masuk ke klasemen pemain."],
-                ["Pemain telat", "Mulai tanpa mereka. Saat datang, matchmaker mengejar ketertinggalan."],
-                ["Tautan publik", "Siapa pun dengan link bisa melihat match dan klasemen live."],
-              ].map(([title, body]) => (
-                <div key={title} className="rounded-xl border border-border/80 bg-card/70 p-4">
+              {FEATURES.map(([title, body]) => (
+                <div key={title} className="rounded-xl border border-border/80 bg-card p-4">
                   <p className="font-medium text-primary">{title}</p>
                   <p className="mt-1 text-sm text-muted-foreground">{body}</p>
                 </div>

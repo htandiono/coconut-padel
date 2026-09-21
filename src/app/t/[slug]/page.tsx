@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { TournamentBoard } from "@/components/tournament-board";
 import { isAdminFor } from "@/lib/actions";
-import { getTournamentSnapshot, toPublicSnapshot } from "@/lib/queries";
+import { getTournamentSnapshotCached } from "@/lib/queries";
+import { toClientSnapshot } from "@/lib/snapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ type PageProps = {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const snapshot = await getTournamentSnapshot(slug);
+  const snapshot = await getTournamentSnapshotCached(slug);
   if (!snapshot) {
     return { title: "Turnamen tidak ditemukan · Coconut Padel" };
   }
@@ -24,14 +25,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function TournamentPage({ params }: PageProps) {
   const { slug } = await params;
-  const snapshot = await getTournamentSnapshot(slug);
+  const [snapshot, isAdmin] = await Promise.all([
+    getTournamentSnapshotCached(slug),
+    isAdminFor(slug),
+  ]);
   if (!snapshot) notFound();
-  const isAdmin = await isAdminFor(slug);
 
   return (
     <TournamentBoard
       slug={slug}
-      initialSnapshot={toPublicSnapshot(snapshot)}
+      initialSnapshot={toClientSnapshot(snapshot)}
       isAdmin={isAdmin}
     />
   );

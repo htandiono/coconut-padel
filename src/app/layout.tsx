@@ -6,16 +6,18 @@ import "./globals.css";
 const outfit = Outfit({
   variable: "--font-outfit",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const fraunces = Fraunces({
   variable: "--font-fraunces",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "Coconut Padel",
-  description: "Matchmaker padel Americano karya anak Binjai. Multi lapangan, pemain telat, klasemen live.",
+  description: "Matchmaker padel Americano — karya anak Binjai.",
 };
 
 export default function RootLayout({

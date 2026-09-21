@@ -1,4 +1,5 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { cache } from "react";
+import { asc, eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { matchPlayers, matches, players, tournaments } from "./db/schema";
 import { computeStandings, type CompletedMatch } from "./scoring";
@@ -29,35 +30,54 @@ export async function getTournamentBySlug(slug: string) {
 }
 
 export async function getTournamentSnapshot(slug: string): Promise<TournamentSnapshot | null> {
-  const tournament = await getTournamentBySlug(slug);
-  if (!tournament) return null;
-
   const db = getDb();
-  const [playerRows, matchRows] = await Promise.all([
-    db.select().from(players).where(eq(players.tournamentId, tournament.id)).orderBy(asc(players.createdAt)),
+  const [rosterRows, matchRows] = await Promise.all([
     db
-      .select()
+      .select({
+        tournament: tournaments,
+        player: players,
+      })
+      .from(tournaments)
+      .leftJoin(players, eq(players.tournamentId, tournaments.id))
+      .where(eq(tournaments.slug, slug))
+      .orderBy(asc(players.createdAt)),
+    db
+      .select({
+        match: matches,
+        slot: matchPlayers,
+      })
       .from(matches)
-      .where(eq(matches.tournamentId, tournament.id))
+      .innerJoin(tournaments, eq(matches.tournamentId, tournaments.id))
+      .leftJoin(matchPlayers, eq(matchPlayers.matchId, matches.id))
+      .where(eq(tournaments.slug, slug))
       .orderBy(asc(matches.roundNumber), asc(matches.courtNumber)),
   ]);
 
-  const playerMap = new Map(playerRows.map((player) => [player.id, player]));
-  const matchIds = matchRows.map((match) => match.id);
-  const lineup =
-    matchIds.length === 0
-      ? []
-      : await db.select().from(matchPlayers).where(inArray(matchPlayers.matchId, matchIds));
+  if (rosterRows.length === 0) return null;
 
+  const tournament = rosterRows[0].tournament;
+  const playerRows = rosterRows
+    .map((row) => row.player)
+    .filter((player): player is typeof players.$inferSelect => Boolean(player));
+  const playerMap = new Map(playerRows.map((player) => [player.id, player]));
+
+  const matchOrder: Array<typeof matches.$inferSelect> = [];
+  const seenMatches = new Set<string>();
   const lineupByMatch = new Map<string, Array<typeof matchPlayers.$inferSelect>>();
-  for (const row of lineup) {
-    if (!matchIds.includes(row.matchId)) continue;
-    const list = lineupByMatch.get(row.matchId) ?? [];
-    list.push(row);
-    lineupByMatch.set(row.matchId, list);
+
+  for (const row of matchRows) {
+    if (!seenMatches.has(row.match.id)) {
+      seenMatches.add(row.match.id);
+      matchOrder.push(row.match);
+    }
+    if (row.slot) {
+      const list = lineupByMatch.get(row.match.id) ?? [];
+      list.push(row.slot);
+      lineupByMatch.set(row.match.id, list);
+    }
   }
 
-  const hydrated = matchRows.map((match) => {
+  const hydrated = matchOrder.map((match) => {
     const slots = lineupByMatch.get(match.id) ?? [];
     const teamA = slots
       .filter((slot) => slot.team === "A")
@@ -88,15 +108,15 @@ export async function getTournamentSnapshot(slug: string): Promise<TournamentSna
     }
   }
 
-  const currentRound = matchRows.reduce((max, match) => Math.max(max, match.roundNumber), 0);
-  const latestRoundMatches = hydrated.filter((match) => match.roundNumber === currentRound);
+  const currentRound = matchOrder.reduce((max, match) => Math.max(max, match.roundNumber), 0);
+  // Pemain hadir yang tidak sedang bermain = antrean match berikutnya.
   const playingIds = new Set(
-    latestRoundMatches.flatMap((match) => [...match.teamA, ...match.teamB].map((player) => player.id)),
+    hydrated
+      .filter((match) => match.status === "pending")
+      .flatMap((match) => [...match.teamA, ...match.teamB].map((player) => player.id)),
   );
   const sittingOut =
-    currentRound === 0
-      ? []
-      : playerRows.filter((player) => player.present && !playingIds.has(player.id));
+    currentRound === 0 ? [] : playerRows.filter((player) => player.present && !playingIds.has(player.id));
 
   return {
     tournament,
@@ -111,6 +131,8 @@ export async function getTournamentSnapshot(slug: string): Promise<TournamentSna
   };
 }
 
+export const getTournamentSnapshotCached = cache(getTournamentSnapshot);
+
 export function pastMatchesFromSnapshot(snapshot: TournamentSnapshot): PastMatch[] {
   return snapshot.matches
     .filter((match) => match.teamA.length === 2 && match.teamB.length === 2)
@@ -120,21 +142,3 @@ export function pastMatchesFromSnapshot(snapshot: TournamentSnapshot): PastMatch
     }));
 }
 
-export type PublicTournament = Omit<typeof tournaments.$inferSelect, "adminPinHash">;
-
-export type PublicSnapshot = Omit<TournamentSnapshot, "tournament"> & {
-  tournament: PublicTournament;
-};
-
-export function toPublicSnapshot(snapshot: TournamentSnapshot): PublicSnapshot {
-  const { adminPinHash: _pin, ...tournament } = snapshot.tournament;
-  return { ...snapshot, tournament };
-}
-
-export async function listPendingMatches(tournamentId: string) {
-  const db = getDb();
-  return db
-    .select()
-    .from(matches)
-    .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, "pending")));
-}

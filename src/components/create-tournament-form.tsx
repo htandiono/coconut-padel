@@ -22,12 +22,11 @@ export function CreateTournamentForm() {
   const filled = useMemo(() => players.filter((player) => player.name.trim()).length, [players]);
 
   return (
-    <Card className="border-primary/20 bg-card/90 backdrop-blur">
+    <Card className="border-primary/20 bg-card">
       <CardHeader>
-        <CardTitle className="font-heading text-2xl">Buat turnamen Americano</CardTitle>
+        <CardTitle className="font-heading text-2xl">Buat turnamen</CardTitle>
         <CardDescription>
-          Isi pemain yang sudah di lokasi. Tandai yang pasti telat — pertandingan bisa dimulai tanpa mereka,
-          lalu mereka diprioritaskan sampai jumlah mainnya menyusul.
+          Tandai yang bakal telat — main bisa mulai duluan tanpa mereka.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -59,14 +58,14 @@ export function CreateTournamentForm() {
               <Label htmlFor="pin">PIN pengelola (4-6 digit)</Label>
               <Input id="pin" name="pin" inputMode="numeric" pattern="\d{4,6}" required placeholder="Misalnya 1234" />
               <p className="text-xs text-muted-foreground">
-                PIN ini untuk mengisi skor dan mengatur pemain. Siapa pun yang punya tautan tetap bisa melihat pertandingan dan klasemen.
+                Buat isi skor dan atur pemain. Yang lain cukup buka tautannya.
               </p>
             </div>
           </div>
 
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <Label>Daftar pemain · {filled} nama</Label>
+              <Label>Pemain · {filled}</Label>
               <Button
                 type="button"
                 variant="outline"
@@ -76,7 +75,7 @@ export function CreateTournamentForm() {
                 }
               >
                 <Plus />
-                Tambah baris
+                Tambah
               </Button>
             </div>
             <div className="space-y-2">
@@ -128,7 +127,7 @@ export function CreateTournamentForm() {
           ) : null}
 
           <Button type="submit" size="lg" className="w-full" disabled={pending}>
-            {pending ? "Menyimpan…" : "Buat turnamen & bagikan tautan"}
+            {pending ? "Sebentar…" : "Buat turnamen"}
           </Button>
         </form>
       </CardContent>

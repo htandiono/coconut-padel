@@ -50,13 +50,18 @@ function pairingCost(
   partners: Counts,
   opponents: Counts,
 ) {
+  // Kuadrat: pasangan yang belum pernah selalu menang, dan kalau repeat
+  // tak terhindarkan (pemain sedikit, ronde banyak), repeat disebar rata
+  // ke pasangan yang jumlah pairing-nya paling sedikit.
+  const square = (count: number) => count * count;
   const partnerRepeats =
-    getCount(partners, teamA[0], teamA[1]) + getCount(partners, teamB[0], teamB[1]);
+    square(getCount(partners, teamA[0], teamA[1])) +
+    square(getCount(partners, teamB[0], teamB[1]));
   const opponentRepeats =
-    getCount(opponents, teamA[0], teamB[0]) +
-    getCount(opponents, teamA[0], teamB[1]) +
-    getCount(opponents, teamA[1], teamB[0]) +
-    getCount(opponents, teamA[1], teamB[1]);
+    square(getCount(opponents, teamA[0], teamB[0])) +
+    square(getCount(opponents, teamA[0], teamB[1])) +
+    square(getCount(opponents, teamA[1], teamB[0])) +
+    square(getCount(opponents, teamA[1], teamB[1]));
   return partnerRepeats * 50 + opponentRepeats * 10;
 }
 

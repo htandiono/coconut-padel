@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { getTournamentSnapshot, toPublicSnapshot } from "@/lib/queries";
+import { getTournamentSnapshot } from "@/lib/queries";
+import { etagFromRevision, toClientSnapshot } from "@/lib/snapshot";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
@@ -12,5 +13,23 @@ export async function GET(
   if (!snapshot) {
     return NextResponse.json({ message: "Turnamen tidak ditemukan." }, { status: 404 });
   }
-  return NextResponse.json(toPublicSnapshot(snapshot));
+
+  const client = toClientSnapshot(snapshot);
+  const etag = etagFromRevision(client.revision);
+  if (request.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        "Cache-Control": "no-cache",
+      },
+    });
+  }
+
+  return NextResponse.json(client, {
+    headers: {
+      ETag: etag,
+      "Cache-Control": "no-cache",
+    },
+  });
 }
