@@ -242,6 +242,9 @@ export function TournamentBoard({
                     matches={doneMatches}
                     pointsPerMatch={snapshot.tournament.pointsPerMatch}
                     defaultOpen={finished}
+                    isAdmin={isAdmin}
+                    busy={busy}
+                    onSave={(matchId, a, b) => run(() => submitScore(slug, matchId, a, b))}
                   />
                 ) : null}
               </>
@@ -452,10 +455,15 @@ const MatchCard = memo(function MatchCard({
             winner={completed && (match.teamBScore ?? 0) > (match.teamAScore ?? 0)}
           />
         </div>
-        {isAdmin && pending ? (
+        {isAdmin ? (
           <>
-            <Button className="w-full" disabled={busy} onClick={() => setOpen(true)}>
-              Isi skor
+            <Button
+              className="w-full"
+              variant={pending ? "default" : "outline"}
+              disabled={busy}
+              onClick={() => setOpen(true)}
+            >
+              {pending ? "Isi skor" : "Ubah skor"}
             </Button>
             <Dialog
               open={open}
@@ -466,7 +474,7 @@ const MatchCard = memo(function MatchCard({
             >
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Isi skor</DialogTitle>
+                  <DialogTitle>{pending ? "Isi skor" : "Ubah skor"}</DialogTitle>
                 </DialogHeader>
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-xl bg-secondary/40 p-3 text-center">
                   <div>
@@ -501,7 +509,7 @@ const MatchCard = memo(function MatchCard({
                 <DialogFooter>
                   <Button
                     className="w-full"
-                    disabled={scoreA === null || busy}
+                    disabled={scoreA === null || busy || scoreA === match.teamAScore}
                     onClick={async () => {
                       if (scoreA === null) return;
                       await onSave(scoreA, pointsPerMatch - scoreA);
@@ -524,10 +532,16 @@ function MatchHistory({
   matches,
   pointsPerMatch,
   defaultOpen,
+  isAdmin,
+  busy,
+  onSave,
 }: {
   matches: ClientMatch[];
   pointsPerMatch: number;
   defaultOpen: boolean;
+  isAdmin: boolean;
+  busy: boolean;
+  onSave: (matchId: string, teamAScore: number, teamBScore: number) => Promise<void> | void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -546,8 +560,9 @@ function MatchHistory({
               key={match.id}
               match={match}
               pointsPerMatch={pointsPerMatch}
-              isAdmin={false}
-              onSave={async () => undefined}
+              isAdmin={isAdmin}
+              busy={busy}
+              onSave={(a, b) => onSave(match.id, a, b)}
             />
           ))}
         </div>

@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { customAlphabet } from "nanoid";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { matchPlayers, matches, players, tournaments } from "@/lib/db/schema";
 import {
@@ -316,6 +316,13 @@ export async function submitScore(
   }
 
   const db = getDb();
+  const [existing] = await db
+    .select({ status: matches.status })
+    .from(matches)
+    .where(and(eq(matches.id, matchId), eq(matches.tournamentId, tournament.id)))
+    .limit(1);
+  if (!existing) return { ok: false, message: "Match tidak ditemukan." };
+
   await db
     .update(matches)
     .set({
@@ -325,6 +332,9 @@ export async function submitScore(
     })
     .where(eq(matches.id, matchId));
 
+  if (existing.status === "completed") {
+    return okWithSnapshot(slug, "Skor diubah.");
+  }
   return fillThenRespond(slug, "Skor tersimpan.", tournament.status === "live");
 }
 
