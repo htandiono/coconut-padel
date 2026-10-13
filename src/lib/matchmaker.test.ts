@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { generateRound, type PastMatch } from "./matchmaker";
+import {
+  generateRound,
+  previewUpcomingRounds,
+  roundToActivate,
+  roundsAheadOfPlay,
+  scheduledTailCeiling,
+  shouldHoldForFullRound,
+  statusesForBatch,
+  type PastMatch,
+} from "./matchmaker";
 import { computeStandings, isValidAmericanoScore } from "./scoring";
 
 describe("americano scoring", () => {
@@ -23,6 +32,109 @@ describe("americano scoring", () => {
     expect(standings.find((row) => row.playerId === "b")?.points).toBe(30);
     expect(standings.find((row) => row.playerId === "c")?.points).toBe(18);
     expect(standings.find((row) => row.playerId === "d")?.points).toBe(22);
+  });
+});
+
+describe("ronde penuh", () => {
+  it("menahan match baru selama masih ada lapangan yang main", () => {
+    expect(shouldHoldForFullRound("full", 1)).toBe(true);
+    expect(shouldHoldForFullRound("full", 0)).toBe(false);
+    expect(shouldHoldForFullRound("continuous", 2)).toBe(false);
+  });
+
+  it("memutar yang duduk begitu semua lapangan selesai, untuk 9 pemain di 2 lapangan", () => {
+    const players = Array.from({ length: 9 }, (_, i) => ({ id: `p${i}`, present: true }));
+    const first = generateRound({
+      players,
+      courtCount: 2,
+      pastMatches: [],
+      roundNumber: 1,
+    });
+    expect(first.matches).toHaveLength(2);
+    expect(first.sittingOut).toHaveLength(1);
+
+    const sat = first.sittingOut[0];
+    const second = generateRound({
+      players,
+      courtCount: 2,
+      pastMatches: first.matches.map((match) => ({ teamA: match.teamA, teamB: match.teamB })),
+      roundNumber: 2,
+    });
+    const playing = second.matches.flatMap((match) => [...match.teamA, ...match.teamB]);
+    expect(playing).toContain(sat);
+    expect(second.sittingOut).not.toContain(sat);
+  });
+
+  it("menampilkan 20 ronde ke depan dan tetap menggilir pemain yang duduk", () => {
+    const players = Array.from({ length: 9 }, (_, i) => ({ id: `p${i}`, present: true }));
+    const first = generateRound({
+      players,
+      courtCount: 2,
+      pastMatches: [],
+      roundNumber: 1,
+    });
+    const upcoming = previewUpcomingRounds({
+      players,
+      courtCount: 2,
+      pastMatches: first.matches.map((match) => ({ teamA: match.teamA, teamB: match.teamB })),
+      nextRoundNumber: 2,
+    });
+
+    expect(upcoming).toHaveLength(20);
+    expect(upcoming[0].roundNumber).toBe(2);
+    expect(upcoming[19].roundNumber).toBe(21);
+    expect(upcoming[0].matches).toHaveLength(2);
+    const playingNext = upcoming[0].matches.flatMap((match) => [...match.teamA, ...match.teamB]);
+    expect(playingNext).toContain(first.sittingOut[0]);
+
+    const sitters = [first.sittingOut[0], ...upcoming.slice(0, 8).map((round) => round.sittingOut[0])];
+    expect(new Set(sitters).size).toBe(sitters.length);
+  });
+
+  it("menjaga 20 ronde setelah ronde yang sedang dimainkan", () => {
+    expect(roundsAheadOfPlay([])).toBe(21);
+    expect(
+      roundsAheadOfPlay([
+        { roundNumber: 1, status: "pending" },
+        { roundNumber: 8, status: "scheduled" },
+      ]),
+    ).toBe(13);
+    expect(
+      roundsAheadOfPlay([
+        { roundNumber: 1, status: "completed" },
+        { roundNumber: 2, status: "scheduled" },
+        { roundNumber: 8, status: "scheduled" },
+      ]),
+    ).toBe(14);
+    expect(roundsAheadOfPlay([{ roundNumber: 8, status: "completed" }])).toBe(21);
+    expect(
+      roundsAheadOfPlay([
+        { roundNumber: 6, status: "pending" },
+        { roundNumber: 26, status: "scheduled" },
+      ]),
+    ).toBe(0);
+  });
+
+  it("menahan ronde terjadwal sampai ronde yang sedang main selesai", () => {
+    const matches = [
+      { roundNumber: 1, status: "pending" },
+      { roundNumber: 2, status: "scheduled" },
+      { roundNumber: 3, status: "scheduled" },
+    ];
+    expect(roundToActivate(matches)).toBeNull();
+    expect(scheduledTailCeiling(matches)).toBe(1);
+    expect(statusesForBatch(3, true)).toEqual(["scheduled", "scheduled", "scheduled"]);
+  });
+
+  it("mengaktifkan ronde terjadwal paling awal setelah tidak ada yang main", () => {
+    const matches = [
+      { roundNumber: 1, status: "completed" },
+      { roundNumber: 2, status: "scheduled" },
+      { roundNumber: 4, status: "scheduled" },
+    ];
+    expect(roundToActivate(matches)).toBe(2);
+    expect(scheduledTailCeiling(matches)).toBe(1);
+    expect(statusesForBatch(3, false)).toEqual(["pending", "scheduled", "scheduled"]);
   });
 });
 
@@ -133,5 +245,27 @@ describe("americano matchmaker", () => {
     // a-d dan b-c belum pernah sepasangan, jadi harus dipilih.
     expect(teams).toContain("a-d");
     expect(teams).toContain("b-c");
+  });
+
+  it("menghadapi lawan yang jarang ketemu meski harus mengulang pasangan", () => {
+    const past: PastMatch[] = [{ teamA: ["a", "c"], teamB: ["b", "d"] }];
+    for (let index = 0; index < 2; index += 1) {
+      past.push({ teamA: ["a", "x"], teamB: ["c", "y"] });
+      past.push({ teamA: ["b", "x"], teamB: ["d", "y"] });
+    }
+
+    const next = generateRound({
+      players: ["a", "b", "c", "d"].map((id) => ({ id, present: true })),
+      courtCount: 1,
+      pastMatches: past,
+      roundNumber: 4,
+    });
+    const teams = [next.matches[0].teamA, next.matches[0].teamB].map((team) =>
+      [...team].sort().join("-"),
+    );
+    // a-c dan b-d sudah sering jadi lawan. Lebih rata kalau mereka sepasangan,
+    // lalu masing-masing menghadapi orang yang belum sering ditemui.
+    expect(teams).toContain("a-c");
+    expect(teams).toContain("b-d");
   });
 });

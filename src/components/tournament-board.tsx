@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Lock, Minus, Plus, Share2, Trophy, UserPlus } from "lucide-react";
 import {
   addPlayer,
@@ -10,6 +10,7 @@ import {
   submitScore,
   unlockAdmin,
   updateCourtCount,
+  updateScheduleMode,
   type ActionResult,
 } from "@/lib/actions";
 import type { ClientMatch, ClientSnapshot } from "@/lib/snapshot";
@@ -97,6 +98,14 @@ export function TournamentBoard({
   );
   const presentCount = snapshot.players.filter((player) => player.present).length;
   const lateWaiting = snapshot.players.filter((player) => !player.present);
+  const scheduledCount = snapshot.matches.filter((match) => match.status === "scheduled").length;
+  const playingRound = useMemo(() => {
+    const pendingRounds = snapshot.matches
+      .filter((match) => match.status === "pending")
+      .map((match) => match.roundNumber);
+    if (pendingRounds.length === 0) return snapshot.currentRound;
+    return Math.min(...pendingRounds);
+  }, [snapshot.currentRound, snapshot.matches]);
 
   const live = snapshot.tournament.status === "live";
   const finished = snapshot.tournament.status === "finished";
@@ -143,9 +152,10 @@ export function TournamentBoard({
               <Badge>{statusLabel[snapshot.tournament.status] ?? snapshot.tournament.status}</Badge>
               <Badge variant="outline">{snapshot.tournament.courtCount} lapangan</Badge>
               <Badge variant="outline">{snapshot.tournament.pointsPerMatch} poin</Badge>
-              {snapshot.currentRound > 0 ? (
-                <Badge variant="outline">Ronde {snapshot.currentRound}</Badge>
+              {snapshot.tournament.scheduleMode === "full" ? (
+                <Badge variant="outline">Ronde penuh</Badge>
               ) : null}
+              {playingRound > 0 ? <Badge variant="outline">Ronde {playingRound}</Badge> : null}
               {isAdmin ? <Badge variant="secondary">Pengelola</Badge> : null}
             </div>
             <h1 className="font-heading text-3xl tracking-tight sm:text-4xl">
@@ -190,6 +200,9 @@ export function TournamentBoard({
         {isAdmin && !finished ? (
           <AdminBar
             courtCount={snapshot.tournament.courtCount}
+            scheduleMode={snapshot.tournament.scheduleMode}
+            pendingCount={pendingMatches.length}
+            scheduledCount={scheduledCount}
             started={snapshot.currentRound > 0}
             live={live}
             stats={`${presentCount} hadir · ${pendingMatches.length} match jalan · ${snapshot.sittingOut.length} nunggu`}
@@ -197,6 +210,7 @@ export function TournamentBoard({
             onStart={() => run(() => startOrNextRound(slug))}
             onFinish={() => run(() => finishTournament(slug))}
             onCourts={(count) => run(() => updateCourtCount(slug, count))}
+            onScheduleMode={(mode) => run(() => updateScheduleMode(slug, mode))}
           />
         ) : null}
 
@@ -210,7 +224,14 @@ export function TournamentBoard({
           <TabsContent value="matches" className="mt-4 space-y-4">
             {finished ? <ChampionCard snapshot={snapshot} playerNames={playerNames} /> : null}
 
-            {snapshot.currentRound === 0 ? (
+            {snapshot.tournament.scheduleMode === "full" && snapshot.matches.length > 0 ? (
+              <FullRoundBoard
+                snapshot={snapshot}
+                isAdmin={isAdmin && !finished}
+                busy={busy}
+                onSave={(matchId, a, b) => run(() => submitScore(slug, matchId, a, b))}
+              />
+            ) : snapshot.currentRound === 0 ? (
               <EmptyMatches isAdmin={isAdmin} />
             ) : (
               <>
@@ -262,6 +283,7 @@ export function TournamentBoard({
               busyIds={busyIds}
               isAdmin={isAdmin && !finished}
               busy={busy}
+              fullRound={snapshot.tournament.scheduleMode === "full"}
               onArrive={(playerId, present) => run(() => setPlayerArrival(slug, playerId, present))}
               onAdd={(name, late) => run(() => addPlayer(slug, name, late))}
             />
@@ -296,6 +318,132 @@ function ChampionCard({
   );
 }
 
+function preferredRound(matches: ClientMatch[]): number | null {
+  if (matches.length === 0) return null;
+  const pending = matches.filter((match) => match.status === "pending").map((match) => match.roundNumber);
+  if (pending.length > 0) return Math.min(...pending);
+  const scheduled = matches.filter((match) => match.status === "scheduled").map((match) => match.roundNumber);
+  if (scheduled.length > 0) return Math.min(...scheduled);
+  return Math.max(...matches.map((match) => match.roundNumber));
+}
+
+function FullRoundBoard({
+  snapshot,
+  isAdmin,
+  busy,
+  onSave,
+}: {
+  snapshot: ClientSnapshot;
+  isAdmin: boolean;
+  busy: boolean;
+  onSave: (matchId: string, teamAScore: number, teamBScore: number) => Promise<void> | void;
+}) {
+  const rounds = useMemo(() => {
+    const grouped = new Map<number, ClientMatch[]>();
+    for (const match of snapshot.matches) {
+      const list = grouped.get(match.roundNumber) ?? [];
+      list.push(match);
+      grouped.set(match.roundNumber, list);
+    }
+    return [...grouped.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([roundNumber, matches]) => ({
+        roundNumber,
+        matches: [...matches].sort((a, b) => a.courtNumber - b.courtNumber),
+      }));
+  }, [snapshot.matches]);
+  const fallback = preferredRound(snapshot.matches) ?? rounds[0]?.roundNumber ?? null;
+  const [picked, setPicked] = useState<number | null>(null);
+  const selected = rounds.some((round) => round.roundNumber === picked) ? picked : fallback;
+  const current = rounds.find((round) => round.roundNumber === selected) ?? rounds[0];
+  const playingRound = preferredRound(snapshot.matches.filter((match) => match.status === "pending"));
+  if (!current) return null;
+
+  const sitting = snapshot.players.filter(
+    (player) =>
+      player.present &&
+      !current.matches.some((match) =>
+        [...match.teamA, ...match.teamB].some((member) => member.id === player.id),
+      ),
+  );
+
+  return (
+    <div className="space-y-4">
+      <RoundStrip
+        rounds={rounds.map((round) => round.roundNumber)}
+        selected={current.roundNumber}
+        playingRound={playingRound}
+        onSelect={setPicked}
+      />
+      {sitting.length > 0 ? (
+        <p className="text-sm text-muted-foreground">Duduk: {sitting.map((player) => player.name).join(", ")}</p>
+      ) : null}
+      <div className="grid gap-4 md:grid-cols-2">
+        {current.matches.map((match) => (
+          <MatchCard
+            key={match.id}
+            match={match}
+            pointsPerMatch={snapshot.tournament.pointsPerMatch}
+            isAdmin={isAdmin}
+            busy={busy}
+            onSave={(teamAScore, teamBScore) => onSave(match.id, teamAScore, teamBScore)}
+          />
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Jadwal diisi 20 ronde ke depan. Geser untuk pindah ronde, lalu isi skor.
+      </p>
+    </div>
+  );
+}
+
+function RoundStrip({
+  rounds,
+  selected,
+  playingRound,
+  onSelect,
+}: {
+  rounds: number[];
+  selected: number;
+  playingRound: number | null;
+  onSelect: (round: number) => void;
+}) {
+  const selectedRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [selected]);
+
+  return (
+    <div className="flex gap-2 overflow-x-auto snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {rounds.map((round) => {
+        const active = round === selected;
+        const playing = round === playingRound;
+        return (
+          <button
+            key={round}
+            ref={active ? selectedRef : undefined}
+            type="button"
+            onClick={() => onSelect(round)}
+            className={`flex shrink-0 snap-start items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+              active
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border/70 bg-card"
+            }`}
+          >
+            Ronde {round}
+            {playing ? (
+              <span
+                className={`size-1.5 rounded-full ${active ? "bg-primary-foreground" : "bg-primary"}`}
+              />
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function EmptyMatches({ isAdmin }: { isAdmin: boolean }) {
   return (
     <Card>
@@ -312,6 +460,9 @@ function EmptyMatches({ isAdmin }: { isAdmin: boolean }) {
 
 function AdminBar({
   courtCount,
+  scheduleMode,
+  pendingCount,
+  scheduledCount,
   started,
   live,
   stats,
@@ -319,8 +470,12 @@ function AdminBar({
   onStart,
   onFinish,
   onCourts,
+  onScheduleMode,
 }: {
   courtCount: number;
+  scheduleMode: string;
+  pendingCount: number;
+  scheduledCount: number;
   started: boolean;
   live: boolean;
   stats: string;
@@ -328,12 +483,43 @@ function AdminBar({
   onStart: () => void;
   onFinish: () => void;
   onCourts: (count: number) => void;
+  onScheduleMode: (mode: "continuous" | "full") => void;
 }) {
+  const fullRound = scheduleMode === "full";
+  const scheduleReady = fullRound && live && (pendingCount > 0 || scheduledCount > 0);
+  const startLabel = busy
+    ? "Sebentar…"
+    : scheduleReady
+      ? "Jadwal siap"
+      : started
+        ? fullRound
+          ? "Ronde berikutnya"
+          : "Buat match"
+        : "Mulai turnamen";
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">{stats}</p>
+        <div className="space-y-1">
+          <p className="text-sm text-muted-foreground">{stats}</p>
+          {fullRound ? (
+            <p className="text-xs text-muted-foreground">
+              Strip di bawah menampilkan 20 ronde setelah ronde yang sedang main.
+            </p>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-lg border border-border/70 px-2 py-1">
+            <Switch
+              id="schedule-mode"
+              checked={fullRound}
+              disabled={busy}
+              onCheckedChange={(checked) => onScheduleMode(checked ? "full" : "continuous")}
+            />
+            <Label htmlFor="schedule-mode" className="text-sm font-normal">
+              Ronde penuh
+            </Label>
+          </div>
           <div className="flex items-center gap-1 rounded-lg border border-border/70 px-2 py-1">
             <span className="pr-1 text-xs text-muted-foreground">Lapangan</span>
             <Button
@@ -356,8 +542,8 @@ function AdminBar({
               <Plus className="size-3.5" />
             </Button>
           </div>
-          <Button disabled={busy} onClick={onStart}>
-            {busy ? "Sebentar…" : started ? "Buat match" : "Mulai turnamen"}
+          <Button disabled={busy || scheduleReady} onClick={onStart}>
+            {startLabel}
           </Button>
           {live ? <FinishDialog busy={busy} onFinish={onFinish} /> : null}
         </div>
@@ -428,19 +614,20 @@ const MatchCard = memo(function MatchCard({
 }) {
   const [open, setOpen] = useState(false);
   const [scoreA, setScoreA] = useState<number | null>(match.teamAScore);
-  const pending = match.status === "pending";
+  const playing = match.status === "pending";
+  const scheduled = match.status === "scheduled";
   const completed = match.status === "completed";
   const scoreB = scoreA === null ? null : pointsPerMatch - scoreA;
 
   return (
-    <Card className={pending ? "border-primary/40" : "match-card-past"}>
+    <Card className={playing ? "border-primary/40" : completed ? "match-card-past" : undefined}>
       <CardContent className="space-y-3 py-4">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Lapangan {match.courtNumber} · Ronde {match.roundNumber}
           </span>
-          <Badge variant={completed ? "secondary" : "default"}>
-            {completed ? "Selesai" : "Main"}
+          <Badge variant={completed || scheduled ? "secondary" : "default"}>
+            {completed ? "Selesai" : playing ? "Main" : "Siap"}
           </Badge>
         </div>
         <div className="space-y-1.5">
@@ -459,11 +646,11 @@ const MatchCard = memo(function MatchCard({
           <>
             <Button
               className="w-full"
-              variant={pending ? "default" : "outline"}
+              variant={playing ? "default" : "outline"}
               disabled={busy}
               onClick={() => setOpen(true)}
             >
-              {pending ? "Isi skor" : "Ubah skor"}
+              {completed ? "Ubah skor" : "Isi skor"}
             </Button>
             <Dialog
               open={open}
@@ -474,7 +661,7 @@ const MatchCard = memo(function MatchCard({
             >
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>{pending ? "Isi skor" : "Ubah skor"}</DialogTitle>
+                  <DialogTitle>{completed ? "Ubah skor" : "Isi skor"}</DialogTitle>
                 </DialogHeader>
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-xl bg-secondary/40 p-3 text-center">
                   <div>
@@ -643,6 +830,7 @@ function PlayersPanel({
   busyIds,
   isAdmin,
   busy,
+  fullRound,
   onArrive,
   onAdd,
 }: {
@@ -651,6 +839,7 @@ function PlayersPanel({
   busyIds: Set<string>;
   isAdmin: boolean;
   busy: boolean;
+  fullRound: boolean;
   onArrive: (playerId: string, present: boolean) => void;
   onAdd: (name: string, late: boolean) => void;
 }) {
@@ -681,14 +870,16 @@ function PlayersPanel({
                 onChange={(event) => setName(event.target.value)}
               />
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <Switch checked={late} onCheckedChange={setLate} />
-              Telat
-            </label>
+            {fullRound ? null : (
+              <label className="flex items-center gap-2 text-sm">
+                <Switch checked={late} onCheckedChange={setLate} />
+                Telat
+              </label>
+            )}
             <Button
               disabled={busy || name.trim().length === 0}
               onClick={() => {
-                onAdd(name, late);
+                onAdd(name, fullRound ? false : late);
                 setName("");
               }}
             >
@@ -715,7 +906,7 @@ function PlayersPanel({
                   >
                     {player.present ? (playing ? "Main" : "Siap") : "Belum datang"}
                   </Badge>
-                  {isAdmin ? (
+                  {isAdmin && !fullRound ? (
                     <Button
                       size="sm"
                       variant="outline"

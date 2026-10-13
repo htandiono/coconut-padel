@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { TournamentBoard } from "@/components/tournament-board";
-import { isAdminFor } from "@/lib/actions";
+import { ensureUpcomingRounds, isAdminFor } from "@/lib/actions";
 import { getTournamentSnapshotCached } from "@/lib/queries";
 import { toClientSnapshot } from "@/lib/snapshot";
 
@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function TournamentPage({ params }: PageProps) {
   const { slug } = await params;
   const [snapshot, isAdmin] = await Promise.all([
-    getTournamentSnapshotCached(slug),
+    ensureUpcomingRounds(slug),
     isAdminFor(slug),
   ]);
   if (!snapshot) notFound();

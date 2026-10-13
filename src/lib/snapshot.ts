@@ -32,6 +32,7 @@ export type ClientSnapshot = {
     status: string;
     courtCount: number;
     pointsPerMatch: number;
+    scheduleMode: string;
   };
   players: ClientPlayer[];
   matches: ClientMatch[];
@@ -53,6 +54,7 @@ export function snapshotRevision(snapshot: Omit<ClientSnapshot, "revision">) {
   return [
     snapshot.tournament.status,
     snapshot.tournament.courtCount,
+    snapshot.tournament.scheduleMode,
     snapshot.currentRound,
     snapshot.players.length,
     snapshot.matches.length,
@@ -69,6 +71,7 @@ export function toClientSnapshot(snapshot: TournamentSnapshot): ClientSnapshot {
       status: snapshot.tournament.status,
       courtCount: snapshot.tournament.courtCount,
       pointsPerMatch: snapshot.tournament.pointsPerMatch,
+      scheduleMode: snapshot.tournament.scheduleMode,
     },
     players: snapshot.players.map((player) => ({
       id: player.id,

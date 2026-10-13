@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { customAlphabet } from "nanoid";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { matchPlayers, matches, players, tournaments } from "@/lib/db/schema";
 import {
@@ -15,21 +15,37 @@ import {
   signAdminToken,
   verifyPin,
 } from "@/lib/auth";
-import { generateRound } from "@/lib/matchmaker";
+import {
+  generateRound,
+  previewUpcomingRounds,
+  roundToActivate,
+  roundsAheadOfPlay,
+  scheduledTailCeiling,
+  statusesForBatch,
+  type ScheduleMode,
+} from "@/lib/matchmaker";
 import { isValidAmericanoScore } from "@/lib/scoring";
 import {
   getTournamentBySlug,
   getTournamentSnapshot,
   pastMatchesFromSnapshot,
+  type TournamentSnapshot,
 } from "@/lib/queries";
 import { toClientSnapshot, type ClientSnapshot } from "@/lib/snapshot";
 
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 8);
 const POINTS_OPTIONS = [16, 21, 24, 32] as const;
+const SCHEDULE_MODES = ["continuous", "full"] as const;
+
+function parseScheduleMode(value: string): ScheduleMode | null {
+  return SCHEDULE_MODES.includes(value as ScheduleMode) ? (value as ScheduleMode) : null;
+}
 
 export type ActionResult =
   | { ok: true; message?: string; snapshot?: ClientSnapshot }
   | { ok: false; message: string };
+
+type FillResult = ActionResult & { held?: boolean };
 
 async function requireAdmin(slug: string) {
   const jar = await cookies();
@@ -61,10 +77,22 @@ async function okWithSnapshot(slug: string, message: string): Promise<ActionResu
   return { ok: true, message, snapshot: toClientSnapshot(snapshot) };
 }
 
-async function persistRound(tournamentId: string, roundNumber: number, generated: ReturnType<typeof generateRound>) {
-  if (generated.matches.length === 0) return;
+async function persistRound(
+  tournamentId: string,
+  roundNumber: number,
+  generated: ReturnType<typeof generateRound>,
+  status: "pending" | "scheduled" = "pending",
+) {
+  if (generated.matches.length === 0) return false;
 
   const db = getDb();
+  const existing = await db
+    .select({ id: matches.id })
+    .from(matches)
+    .where(and(eq(matches.tournamentId, tournamentId), eq(matches.roundNumber, roundNumber)))
+    .limit(1);
+  if (existing.length > 0) return false;
+
   const created = await db
     .insert(matches)
     .values(
@@ -72,10 +100,12 @@ async function persistRound(tournamentId: string, roundNumber: number, generated
         tournamentId,
         roundNumber,
         courtNumber: match.court,
-        status: "pending" as const,
+        status,
       })),
     )
     .returning({ id: matches.id });
+
+  if (created.length !== generated.matches.length) return false;
 
   await db.insert(matchPlayers).values(
     created.flatMap((row, index) => {
@@ -88,17 +118,145 @@ async function persistRound(tournamentId: string, roundNumber: number, generated
       ];
     }),
   );
+  return true;
+}
+
+async function markLive(snapshot: TournamentSnapshot) {
+  if (snapshot.tournament.status === "live") return;
+  const db = getDb();
+  await db
+    .update(tournaments)
+    .set({ status: "live" })
+    .where(eq(tournaments.id, snapshot.tournament.id));
+}
+
+async function savePlannedRounds(snapshot: TournamentSnapshot, alreadyPlaying: boolean, limit: number) {
+  if (limit <= 0) return 0;
+  const nextRoundNumber =
+    snapshot.matches.reduce((max, match) => Math.max(max, match.roundNumber), 0) + 1;
+  const rounds = previewUpcomingRounds({
+    players: snapshot.players.map((player) => ({ id: player.id, present: player.present })),
+    courtCount: snapshot.tournament.courtCount,
+    pastMatches: pastMatchesFromSnapshot(snapshot),
+    nextRoundNumber,
+    limit,
+  });
+  const statuses = statusesForBatch(rounds.length, alreadyPlaying);
+  let saved = 0;
+  for (const [index, round] of rounds.entries()) {
+    const created = await persistRound(snapshot.tournament.id, round.roundNumber, round, statuses[index]);
+    if (created) saved += 1;
+  }
+  return saved;
+}
+
+/** Susun ulang ronde yang belum main dan belum punya skor. */
+async function rewriteScheduledTail(slug: string) {
+  const snapshot = await getTournamentSnapshot(slug);
+  if (!snapshot || snapshot.tournament.scheduleMode !== "full") return;
+  const ceiling = scheduledTailCeiling(snapshot.matches);
+  const removable = snapshot.matches.filter(
+    (match) => match.status === "scheduled" && match.roundNumber > ceiling,
+  );
+  if (removable.length === 0) return;
+
+  const db = getDb();
+  await db.delete(matches).where(
+    inArray(
+      matches.id,
+      removable.map((match) => match.id),
+    ),
+  );
+
+  const fresh = await getTournamentSnapshot(slug);
+  if (!fresh) return;
+  await savePlannedRounds(fresh, true, roundsAheadOfPlay(fresh.matches));
+}
+
+async function deleteScheduledMatches(tournamentId: string) {
+  const db = getDb();
+  const rows = await db
+    .select({ id: matches.id })
+    .from(matches)
+    .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, "scheduled")));
+  if (rows.length === 0) return;
+  await db.delete(matches).where(
+    inArray(
+      matches.id,
+      rows.map((row) => row.id),
+    ),
+  );
+}
+
+/**
+ * Mode ronde penuh: ronde pertama langsung main, ronde berikut tersimpan
+ * dan bisa diisi skor. Ronde berikut naik jadi "main" setelah ronde aktif selesai.
+ */
+async function advanceFullSchedule(slug: string, snapshot: TournamentSnapshot): Promise<FillResult> {
+  const pending = snapshot.matches.some((match) => match.status === "pending");
+  const scheduled = snapshot.matches.some((match) => match.status === "scheduled");
+
+  if (!pending && scheduled) {
+    const activate = roundToActivate(snapshot.matches);
+    if (activate === null) return { ok: false, message: "Belum ada ronde untuk dimainkan." };
+
+    const db = getDb();
+    await db
+      .update(matches)
+      .set({ status: "pending" })
+      .where(
+        and(
+          eq(matches.tournamentId, snapshot.tournament.id),
+          eq(matches.roundNumber, activate),
+          eq(matches.status, "scheduled"),
+        ),
+      );
+
+    const fresh = await getTournamentSnapshot(slug);
+    if (fresh) await savePlannedRounds(fresh, true, roundsAheadOfPlay(fresh.matches));
+    return okWithSnapshot(slug, `Ronde ${activate} dimulai.`);
+  }
+
+  if (!pending && !scheduled) {
+    const created = await savePlannedRounds(snapshot, false, roundsAheadOfPlay(snapshot.matches));
+    if (created === 0) return { ok: false, message: "Butuh minimal 4 pemain hadir." };
+    await markLive(snapshot);
+    return okWithSnapshot(slug, snapshot.currentRound === 0 ? "Jadwal ronde siap." : "Ronde berikutnya siap.");
+  }
+
+  const created = await savePlannedRounds(snapshot, true, roundsAheadOfPlay(snapshot.matches));
+  if (created > 0) return okWithSnapshot(slug, "Jadwal ronde siap.");
+  return { ok: false, held: true, message: "Ronde berikutnya sudah ada di jadwal." };
+}
+
+/** Isi jadwal yang masih kurang dari 20 ronde di depan ronde yang sedang main. */
+export async function ensureUpcomingRounds(slug: string): Promise<TournamentSnapshot | null> {
+  const snapshot = await getTournamentSnapshot(slug);
+  if (!snapshot) return null;
+  const playing = snapshot.matches.some((match) => match.status === "pending");
+  if (snapshot.tournament.scheduleMode !== "full" || snapshot.tournament.status !== "live" || !playing) {
+    return snapshot;
+  }
+
+  const created = await savePlannedRounds(snapshot, true, roundsAheadOfPlay(snapshot.matches));
+  if (created === 0) return snapshot;
+  refreshTournament(slug);
+  return (await getTournamentSnapshot(slug)) ?? snapshot;
 }
 
 /**
  * Buat match baru di lapangan yang kosong, hanya memakai pemain yang
- * sedang tidak bermain. Ronde lain boleh masih jalan.
+ * sedang tidak bermain. Mode isi langsung boleh mengisi lapangan yang
+ * sudah selesai meski lapangan lain masih main.
  */
-async function fillCourts(slug: string): Promise<ActionResult> {
+async function fillCourts(slug: string): Promise<FillResult> {
   const snapshot = await getTournamentSnapshot(slug);
   if (!snapshot) return { ok: false, message: "Turnamen tidak ditemukan." };
   if (snapshot.tournament.status === "finished") {
     return { ok: false, message: "Turnamen sudah selesai." };
+  }
+  if (snapshot.tournament.scheduleMode === "full") {
+    return advanceFullSchedule(slug, snapshot);
   }
 
   const pending = snapshot.matches.filter((match) => match.status === "pending");
@@ -171,6 +329,9 @@ async function fillThenRespond(slug: string, base: string, live: boolean): Promi
         snapshot: filled.snapshot,
       };
     }
+    if (filled.held) {
+      return okWithSnapshot(slug, `${base} ${filled.message}`);
+    }
   }
   return okWithSnapshot(slug, base);
 }
@@ -183,6 +344,7 @@ export async function createTournament(
   const pin = String(formData.get("pin") ?? "").trim();
   const courtCount = Number(formData.get("courtCount") ?? 1);
   const pointsPerMatch = Number(formData.get("pointsPerMatch") ?? 24);
+  const scheduleMode = parseScheduleMode(String(formData.get("scheduleMode") ?? "continuous"));
   const playerNames = formData.getAll("playerName").map((value) => String(value).trim());
   const lateFlags = formData.getAll("playerLate").map((value) => String(value) === "1");
 
@@ -198,9 +360,15 @@ export async function createTournament(
   if (!POINTS_OPTIONS.includes(pointsPerMatch as (typeof POINTS_OPTIONS)[number])) {
     return { ok: false as const, message: "Pilih poin yang tersedia." };
   }
+  if (!scheduleMode) {
+    return { ok: false as const, message: "Mode jadwal tidak dikenal." };
+  }
 
   const roster = playerNames
-    .map((playerName, index) => ({ name: playerName, isLate: lateFlags[index] ?? false }))
+    .map((playerName, index) => ({
+      name: playerName,
+      isLate: scheduleMode === "full" ? false : (lateFlags[index] ?? false),
+    }))
     .filter((player) => player.name.length > 0);
 
   if (roster.length < 4) {
@@ -216,6 +384,7 @@ export async function createTournament(
       name,
       courtCount,
       pointsPerMatch,
+      scheduleMode,
       status: "setup",
       adminPinHash: hashPin(pin),
     })
@@ -252,6 +421,9 @@ export async function addPlayer(slug: string, name: string, late: boolean): Prom
   const tournament = await getTournamentBySlug(slug);
   if (!tournament) return { ok: false, message: "Turnamen tidak ditemukan." };
   if (tournament.status === "finished") return { ok: false, message: "Turnamen sudah selesai." };
+  if (late && tournament.scheduleMode === "full") {
+    return { ok: false, message: "Mode ronde penuh tidak memakai pemain telat." };
+  }
 
   const db = getDb();
   await db.insert(players).values({
@@ -261,6 +433,9 @@ export async function addPlayer(slug: string, name: string, late: boolean): Prom
     isLate: late,
   });
 
+  if (!late && tournament.scheduleMode === "full" && tournament.status === "live") {
+    await rewriteScheduledTail(slug);
+  }
   if (late) {
     return okWithSnapshot(slug, `${trimmed} masuk daftar — nunggu datang.`);
   }
@@ -271,6 +446,9 @@ export async function setPlayerArrival(slug: string, playerId: string, present: 
   if (!(await requireAdmin(slug))) return { ok: false, message: "Masuk sebagai pengelola dulu." };
   const tournament = await getTournamentBySlug(slug);
   if (!tournament) return { ok: false, message: "Turnamen tidak ditemukan." };
+  if (tournament.scheduleMode === "full") {
+    return { ok: false, message: "Mode ronde penuh tidak memakai pemain telat." };
+  }
 
   const db = getDb();
   await db
@@ -294,7 +472,43 @@ export async function updateCourtCount(slug: string, courtCount: number): Promis
 
   const db = getDb();
   await db.update(tournaments).set({ courtCount }).where(eq(tournaments.id, tournament.id));
+  if (tournament.scheduleMode === "full" && tournament.status === "live") {
+    await rewriteScheduledTail(slug);
+  }
   return fillThenRespond(slug, `Lapangan jadi ${courtCount}.`, tournament.status === "live");
+}
+
+export async function updateScheduleMode(slug: string, mode: string): Promise<ActionResult> {
+  if (!(await requireAdmin(slug))) return { ok: false, message: "Masuk sebagai pengelola dulu." };
+  const scheduleMode = parseScheduleMode(mode);
+  if (!scheduleMode) return { ok: false, message: "Mode jadwal tidak dikenal." };
+
+  const tournament = await getTournamentBySlug(slug);
+  if (!tournament) return { ok: false, message: "Turnamen tidak ditemukan." };
+  if (tournament.status === "finished") return { ok: false, message: "Turnamen sudah selesai." };
+
+  const db = getDb();
+  await db
+    .update(tournaments)
+    .set({ scheduleMode })
+    .where(eq(tournaments.id, tournament.id));
+
+  if (scheduleMode === "full") {
+    await db
+      .update(players)
+      .set({ present: true, isLate: false })
+      .where(eq(players.tournamentId, tournament.id));
+    if (tournament.status === "live") await rewriteScheduledTail(slug);
+  }
+
+  const message =
+    scheduleMode === "full"
+      ? "Mode ronde penuh. Jadwal ronde bisa langsung diisi skor."
+      : "Mode isi langsung. Lapangan kosong langsung diisi.";
+  if (scheduleMode === "continuous") {
+    await deleteScheduledMatches(tournament.id);
+  }
+  return fillThenRespond(slug, message, tournament.status === "live");
 }
 
 export async function startOrNextRound(slug: string): Promise<ActionResult> {
@@ -334,6 +548,10 @@ export async function submitScore(
 
   if (existing.status === "completed") {
     return okWithSnapshot(slug, "Skor diubah.");
+  }
+  if (existing.status === "scheduled") {
+    await ensureUpcomingRounds(slug);
+    return okWithSnapshot(slug, "Skor tersimpan.");
   }
   return fillThenRespond(slug, "Skor tersimpan.", tournament.status === "live");
 }

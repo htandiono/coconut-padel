@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { createTournament, type ActionResult } from "@/lib/actions";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,8 @@ import { Switch } from "@/components/ui/switch";
 type PlayerDraft = { id: number; name: string; late: boolean };
 
 export function CreateTournamentForm() {
+  const [fullRound, setFullRound] = useState(false);
+  const nextPlayerId = useRef(5);
   const [players, setPlayers] = useState<PlayerDraft[]>([
     { id: 1, name: "", late: false },
     { id: 2, name: "", late: false },
@@ -26,11 +28,27 @@ export function CreateTournamentForm() {
       <CardHeader>
         <CardTitle className="font-heading text-2xl">Buat turnamen</CardTitle>
         <CardDescription>
-          Tandai yang bakal telat — main bisa mulai duluan tanpa mereka.
+          {fullRound
+            ? "Semua pemain ikut dari ronde pertama."
+            : "Tandai yang bakal telat — main bisa mulai duluan tanpa mereka."}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form action={formAction} className="space-y-6">
+          <input type="hidden" name="scheduleMode" value={fullRound ? "full" : "continuous"} />
+          <div className="flex items-center gap-3 rounded-lg border border-primary/40 bg-primary/10 p-3">
+            <Switch
+              id="fullRound"
+              checked={fullRound}
+              onCheckedChange={(checked) => {
+                setFullRound(checked);
+                if (checked) {
+                  setPlayers((current) => current.map((row) => ({ ...row, late: false })));
+                }
+              }}
+            />
+            <Label htmlFor="fullRound">Ronde penuh</Label>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="name">Nama turnamen</Label>
@@ -70,9 +88,11 @@ export function CreateTournamentForm() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  setPlayers((current) => [...current, { id: Date.now(), name: "", late: false }])
-                }
+                onClick={() => {
+                  const id = nextPlayerId.current;
+                  nextPlayerId.current += 1;
+                  setPlayers((current) => [...current, { id, name: "", late: false }]);
+                }}
               >
                 <Plus />
                 Tambah
@@ -93,20 +113,22 @@ export function CreateTournamentForm() {
                       )
                     }
                   />
-                  <input type="hidden" name="playerLate" value={player.late ? "1" : "0"} />
-                  <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                    <Switch
-                      checked={player.late}
-                      onCheckedChange={(checked) =>
-                        setPlayers((current) =>
-                          current.map((row) =>
-                            row.id === player.id ? { ...row, late: checked } : row,
-                          ),
-                        )
-                      }
-                    />
-                    Akan telat
-                  </label>
+                  <input type="hidden" name="playerLate" value={!fullRound && player.late ? "1" : "0"} />
+                  {fullRound ? null : (
+                    <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                      <Switch
+                        checked={player.late}
+                        onCheckedChange={(checked) =>
+                          setPlayers((current) =>
+                            current.map((row) =>
+                              row.id === player.id ? { ...row, late: checked } : row,
+                            ),
+                          )
+                        }
+                      />
+                      Akan telat
+                    </label>
+                  )}
                   {players.length > 4 ? (
                     <Button
                       type="button"

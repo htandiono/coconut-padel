@@ -4,7 +4,13 @@ import { etagFromRevision, snapshotRevision } from "./snapshot";
 describe("snapshot revision", () => {
   const payload = {
     currentRound: 1,
-    tournament: { name: "Jumat Malam", status: "live", courtCount: 2, pointsPerMatch: 24 },
+    tournament: {
+      name: "Jumat Malam",
+      status: "live",
+      courtCount: 2,
+      pointsPerMatch: 24,
+      scheduleMode: "continuous",
+    },
     players: [{ id: "p1", name: "Hendrik", present: true, isLate: false }],
     matches: [
       {

@@ -15,6 +15,7 @@ export const tournaments = pgTable("tournaments", {
   name: text("name").notNull(),
   courtCount: integer("court_count").notNull().default(1),
   pointsPerMatch: integer("points_per_match").notNull().default(24),
+  scheduleMode: text("schedule_mode").notNull().default("continuous"),
   status: text("status").notNull().default("setup"),
   adminPinHash: text("admin_pin_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

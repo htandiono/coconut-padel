@@ -19,6 +19,13 @@ export type GeneratedRound = {
   sittingOut: string[];
 };
 
+export type ScheduleMode = "continuous" | "full";
+
+/** Ronde penuh: jangan buat match baru selama masih ada lapangan yang main. */
+export function shouldHoldForFullRound(scheduleMode: string, pendingMatchCount: number) {
+  return scheduleMode === "full" && pendingMatchCount > 0;
+}
+
 type Counts = Map<string, Map<string, number>>;
 
 function bump(counts: Counts, a: string, b: string) {
@@ -50,9 +57,9 @@ function pairingCost(
   partners: Counts,
   opponents: Counts,
 ) {
-  // Kuadrat: pasangan yang belum pernah selalu menang, dan kalau repeat
-  // tak terhindarkan (pemain sedikit, ronde banyak), repeat disebar rata
-  // ke pasangan yang jumlah pairing-nya paling sedikit.
+  // Kuadrat: yang belum pernah ketemu selalu menang, dan kalau repeat
+  // tak terhindarkan, repeat disebar ke pasangan atau lawan yang
+  // jumlahnya paling sedikit.
   const square = (count: number) => count * count;
   const partnerRepeats =
     square(getCount(partners, teamA[0], teamA[1])) +
@@ -62,7 +69,9 @@ function pairingCost(
     square(getCount(opponents, teamA[0], teamB[1])) +
     square(getCount(opponents, teamA[1], teamB[0])) +
     square(getCount(opponents, teamA[1], teamB[1]));
-  return partnerRepeats * 50 + opponentRepeats * 10;
+  // Rekan masih didahulukan, tapi lawan yang jarang ketemu cukup kuat
+  // untuk mengalahkan pasangan baru kalau lawannya sudah sering bentrok.
+  return partnerRepeats * 50 + opponentRepeats * 30;
 }
 
 function buildHistory(pastMatches: PastMatch[]) {
@@ -217,6 +226,94 @@ export function generateRound(input: {
   }
 
   return { matches, sittingOut };
+}
+
+/** Ronde terjadwal yang dijaga di depan ronde yang sedang dimainkan. */
+export const UPCOMING_ROUND_TARGET = 20;
+
+/** Berapa ronde ke depan yang ditampilkan di mode ronde penuh. */
+export function upcomingRoundLimit(playerCount: number, courtCount: number) {
+  const courts = Math.min(courtCount, Math.floor(playerCount / 4));
+  if (courts < 1) return 0;
+  return UPCOMING_ROUND_TARGET;
+}
+
+/**
+ * Berapa ronde yang masih perlu ditambahkan agar jadwal mencapai
+ * 20 ronde setelah ronde yang sedang, atau yang akan, dimainkan.
+ */
+export function roundsAheadOfPlay(matches: { roundNumber: number; status: string }[]) {
+  const ceiling = scheduledTailCeiling(matches);
+  const maxRound = matches.reduce((max, match) => Math.max(max, match.roundNumber), 0);
+  const pending = matches.some((match) => match.status === "pending");
+  const scheduledRounds = matches
+    .filter((match) => match.status === "scheduled")
+    .map((match) => match.roundNumber);
+
+  let anchor: number;
+  if (matches.length === 0) anchor = 1;
+  else if (pending) anchor = Math.max(ceiling, 1);
+  else if (scheduledRounds.length > 0) anchor = Math.min(...scheduledRounds);
+  else anchor = maxRound + 1;
+
+  return Math.max(0, anchor + UPCOMING_ROUND_TARGET - maxRound);
+}
+
+export type PreviewRound = GeneratedRound & { roundNumber: number };
+
+export type StoredMatchStatus = "pending" | "scheduled" | "completed";
+
+/** Ronde pertama langsung main. Sisanya terjadwal dan tetap bisa diisi skor. */
+export function statusesForBatch(count: number, alreadyPlaying: boolean): Array<"pending" | "scheduled"> {
+  return Array.from({ length: count }, (_, index) =>
+    !alreadyPlaying && index === 0 ? "pending" : "scheduled",
+  );
+}
+
+/** Ronde terjadwal paling awal yang boleh naik jadi sedang main. */
+export function roundToActivate(matches: { roundNumber: number; status: string }[]): number | null {
+  if (matches.some((match) => match.status === "pending")) return null;
+  const scheduled = matches.filter((match) => match.status === "scheduled");
+  if (scheduled.length === 0) return null;
+  return Math.min(...scheduled.map((match) => match.roundNumber));
+}
+
+/** Ronde di atas angka ini masih terjadwal dan boleh disusun ulang. */
+export function scheduledTailCeiling(matches: { roundNumber: number; status: string }[]): number {
+  const locked = matches.filter((match) => match.status !== "scheduled");
+  if (locked.length === 0) return 0;
+  return Math.max(...locked.map((match) => match.roundNumber));
+}
+
+/** Perkiraan ronde berikut. Roster yang berubah akan mengubah hasilnya. */
+export function previewUpcomingRounds(input: {
+  players: PlayerRef[];
+  courtCount: number;
+  pastMatches: PastMatch[];
+  nextRoundNumber: number;
+  limit?: number;
+}): PreviewRound[] {
+  const presentCount = input.players.filter((player) => player.present).length;
+  const limit = input.limit ?? upcomingRoundLimit(presentCount, input.courtCount);
+  const past = [...input.pastMatches];
+  const rounds: PreviewRound[] = [];
+
+  for (let index = 0; index < limit; index += 1) {
+    const roundNumber = input.nextRoundNumber + index;
+    const generated = generateRound({
+      players: input.players,
+      courtCount: input.courtCount,
+      pastMatches: past,
+      roundNumber,
+    });
+    if (generated.matches.length === 0) break;
+    rounds.push({ ...generated, roundNumber });
+    for (const match of generated.matches) {
+      past.push({ teamA: match.teamA, teamB: match.teamB });
+    }
+  }
+
+  return rounds;
 }
 
 export function toPastMatch(teamA: [string, string], teamB: [string, string]): PastMatch {
