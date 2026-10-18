@@ -6,6 +6,7 @@ import {
   addPlayer,
   finishTournament,
   setPlayerArrival,
+  setPlayerPoints,
   startOrNextRound,
   submitScore,
   unlockAdmin,
@@ -273,7 +274,13 @@ export function TournamentBoard({
           </TabsContent>
 
           <TabsContent value="standings" className="mt-4">
-            <StandingsTable snapshot={snapshot} playerNames={playerNames} />
+            <StandingsTable
+              snapshot={snapshot}
+              playerNames={playerNames}
+              canEdit={isAdmin && !finished}
+              busy={busy}
+              onPoints={(playerId, points) => run(() => setPlayerPoints(slug, playerId, points))}
+            />
           </TabsContent>
 
           <TabsContent value="players" className="mt-4">
@@ -286,6 +293,7 @@ export function TournamentBoard({
               fullRound={snapshot.tournament.scheduleMode === "full"}
               onArrive={(playerId, present) => run(() => setPlayerArrival(slug, playerId, present))}
               onAdd={(name, late) => run(() => addPlayer(slug, name, late))}
+              onPoints={(playerId, points) => run(() => setPlayerPoints(slug, playerId, points))}
             />
           </TabsContent>
         </Tabs>
@@ -758,19 +766,70 @@ function MatchHistory({
   );
 }
 
+function PointInput({
+  value,
+  disabled,
+  onSave,
+}: {
+  value: number;
+  disabled: boolean;
+  onSave: (points: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  function commit() {
+    const trimmed = draft.trim();
+    if (!/^-?\d+$/.test(trimmed)) {
+      setDraft(String(value));
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (parsed !== value) onSave(parsed);
+  }
+
+  return (
+    <Input
+      aria-label="Poin"
+      inputMode="numeric"
+      value={draft}
+      disabled={disabled}
+      className="h-8 w-16 px-2 text-center tabular-nums"
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
 function StandingsTable({
   snapshot,
   playerNames,
+  canEdit,
+  busy,
+  onPoints,
 }: {
   snapshot: ClientSnapshot;
   playerNames: Map<string, string>;
+  canEdit: boolean;
+  busy: boolean;
+  onPoints: (playerId: string, points: number) => void;
 }) {
   const lateIds = useMemo(
     () => new Set(snapshot.players.filter((player) => !player.present).map((player) => player.id)),
     [snapshot.players],
   );
+  const adjustmentById = useMemo(
+    () => new Map(snapshot.players.map((player) => [player.id, player.pointAdjustment])),
+    [snapshot.players],
+  );
 
-  if (snapshot.standings.every((row) => row.matches === 0)) {
+  if (snapshot.standings.every((row) => row.matches === 0 && row.points === 0)) {
     return <p className="text-sm text-muted-foreground">Klasemen muncul setelah skor pertama.</p>;
   }
 
@@ -783,6 +842,7 @@ function StandingsTable({
               <TableHead>#</TableHead>
               <TableHead>Pemain</TableHead>
               <TableHead>Poin</TableHead>
+              <TableHead>Total</TableHead>
               <TableHead>M</TableHead>
               <TableHead>W</TableHead>
               <TableHead>L</TableHead>
@@ -805,6 +865,13 @@ function StandingsTable({
                     <span className="ml-2 text-xs text-accent">belum datang</span>
                   ) : null}
                 </TableCell>
+                <TableCell>
+                  <PointInput
+                    value={adjustmentById.get(row.playerId) ?? 0}
+                    disabled={!canEdit || busy}
+                    onSave={(points) => onPoints(row.playerId, points)}
+                  />
+                </TableCell>
                 <TableCell className="font-heading text-base tabular-nums">{row.points}</TableCell>
                 <TableCell className="tabular-nums">{row.matches}</TableCell>
                 <TableCell className="tabular-nums">{row.wins}</TableCell>
@@ -817,7 +884,7 @@ function StandingsTable({
           </TableBody>
         </Table>
         <p className="mt-3 text-xs text-muted-foreground">
-          Urutan: poin, head-to-head, menang, kalah, selisih.
+          Urutan: total, head-to-head, menang, kalah, selisih.
         </p>
       </CardContent>
     </Card>
@@ -833,6 +900,7 @@ function PlayersPanel({
   fullRound,
   onArrive,
   onAdd,
+  onPoints,
 }: {
   slug: string;
   snapshot: ClientSnapshot;
@@ -842,6 +910,7 @@ function PlayersPanel({
   fullRound: boolean;
   onArrive: (playerId: string, present: boolean) => void;
   onAdd: (name: string, late: boolean) => void;
+  onPoints: (playerId: string, points: number) => void;
 }) {
   const [name, setName] = useState("");
   const [late, setLate] = useState(true);
@@ -888,40 +957,58 @@ function PlayersPanel({
           </CardContent>
         </Card>
       ) : null}
-      <div className="grid gap-3 sm:grid-cols-2">
-        {snapshot.players.map((player) => {
-          const playing = busyIds.has(player.id);
-          return (
-            <Card key={player.id}>
-              <CardContent className="flex items-center justify-between gap-3 py-4">
-                <div>
-                  <p className="font-medium">{player.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {matchCountById.get(player.id) ?? 0} match
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    variant={player.present ? (playing ? "default" : "outline") : "secondary"}
-                  >
-                    {player.present ? (playing ? "Main" : "Siap") : "Belum datang"}
-                  </Badge>
-                  {isAdmin && !fullRound ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => onArrive(player.id, !player.present)}
-                    >
-                      {player.present ? "Tandai keluar" : "Tandai hadir"}
-                    </Button>
-                  ) : null}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      <Card>
+        <CardContent className="pt-4">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Pemain</TableHead>
+                <TableHead className="w-20 text-center">Poin</TableHead>
+                <TableHead className="w-16 text-center">Match</TableHead>
+                <TableHead className="w-28 text-center">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {snapshot.players.map((player) => {
+                const playing = busyIds.has(player.id);
+                return (
+                  <TableRow key={player.id}>
+                    <TableCell className="whitespace-normal font-medium">{player.name}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-center">
+                        <PointInput
+                          value={player.pointAdjustment}
+                          disabled={!isAdmin || busy}
+                          onSave={(points) => onPoints(player.id, points)}
+                        />
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{matchCountById.get(player.id) ?? 0}</TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <Badge variant={player.present ? (playing ? "default" : "outline") : "secondary"}>
+                          {player.present ? (playing ? "Main" : "Siap") : "Belum datang"}
+                        </Badge>
+                        {isAdmin && !fullRound ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs"
+                            disabled={busy}
+                            onClick={() => onArrive(player.id, !player.present)}
+                          >
+                            {player.present ? "Keluar" : "Hadir"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }

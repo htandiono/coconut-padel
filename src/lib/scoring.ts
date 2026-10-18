@@ -63,8 +63,17 @@ export function isValidAmericanoScore(teamAScore: number, teamBScore: number, po
 export function computeStandings(
   playerIds: string[],
   matches: CompletedMatch[],
+  adjustments: ReadonlyMap<string, number> | Record<string, number> = {},
 ): StandingRow[] {
   const rows = new Map(playerIds.map((id) => [id, emptyRow(id)]));
+  const adjustmentFor = (id: string) =>
+    adjustments instanceof Map ? (adjustments.get(id) ?? 0) : (adjustments[id] ?? 0);
+
+  for (const id of playerIds) {
+    const row = rows.get(id);
+    if (!row) continue;
+    row.points += adjustmentFor(id);
+  }
 
   for (const match of matches) {
     const apply = (ids: [string, string], scored: number, conceded: number) => {

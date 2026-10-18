@@ -31,6 +31,7 @@ export const players = pgTable(
     name: text("name").notNull(),
     present: boolean("present").notNull().default(true),
     isLate: boolean("is_late").notNull().default(false),
+    pointAdjustment: integer("point_adjustment").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("players_tournament_id_idx").on(table.tournamentId)],

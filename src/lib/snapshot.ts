@@ -6,6 +6,7 @@ export type ClientPlayer = {
   name: string;
   present: boolean;
   isLate: boolean;
+  pointAdjustment: number;
 };
 
 export type ClientMatchPlayer = {
@@ -46,7 +47,7 @@ function slimPlayer(player: { id: string; name: string }): ClientMatchPlayer {
 
 export function snapshotRevision(snapshot: Omit<ClientSnapshot, "revision">) {
   const players = snapshot.players
-    .map((player) => `${player.id}:${Number(player.present)}:${Number(player.isLate)}`)
+    .map((player) => `${player.id}:${Number(player.present)}:${Number(player.isLate)}:${player.pointAdjustment}`)
     .join(",");
   const matchState = snapshot.matches
     .map((match) => `${match.id}:${match.status}:${match.teamAScore ?? ""}:${match.teamBScore ?? ""}`)
@@ -78,6 +79,7 @@ export function toClientSnapshot(snapshot: TournamentSnapshot): ClientSnapshot {
       name: player.name,
       present: player.present,
       isLate: player.isLate,
+      pointAdjustment: player.pointAdjustment,
     })),
     matches: snapshot.matches.map((match) => ({
       id: match.id,

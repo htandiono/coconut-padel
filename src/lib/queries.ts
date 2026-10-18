@@ -125,6 +125,7 @@ export async function getTournamentSnapshot(slug: string): Promise<TournamentSna
     standings: computeStandings(
       playerRows.map((player) => player.id),
       completed,
+      new Map(playerRows.map((player) => [player.id, player.pointAdjustment])),
     ),
     sittingOut,
     currentRound,

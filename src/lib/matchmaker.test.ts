@@ -33,6 +33,18 @@ describe("americano scoring", () => {
     expect(standings.find((row) => row.playerId === "c")?.points).toBe(18);
     expect(standings.find((row) => row.playerId === "d")?.points).toBe(22);
   });
+
+  it("menambahkan poin penyesuaian ke total klasemen", () => {
+    const standings = computeStandings(
+      ["a", "b"],
+      [{ teamA: ["a", "b"], teamB: ["c", "d"], teamAScore: 16, teamBScore: 8 }],
+      { a: -4, b: 8 },
+    );
+
+    expect(standings.find((row) => row.playerId === "a")?.points).toBe(12);
+    expect(standings.find((row) => row.playerId === "b")?.points).toBe(24);
+    expect(standings[0].playerId).toBe("b");
+  });
 });
 
 describe("ronde penuh", () => {

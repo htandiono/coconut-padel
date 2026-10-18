@@ -11,7 +11,7 @@ describe("snapshot revision", () => {
       pointsPerMatch: 24,
       scheduleMode: "continuous",
     },
-    players: [{ id: "p1", name: "Hendrik", present: true, isLate: false }],
+    players: [{ id: "p1", name: "Hendrik", present: true, isLate: false, pointAdjustment: 0 }],
     matches: [
       {
         id: "m1",

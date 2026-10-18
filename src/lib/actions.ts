@@ -462,6 +462,26 @@ export async function setPlayerArrival(slug: string, playerId: string, present: 
   return okWithSnapshot(slug, "Ditandai keluar.");
 }
 
+export async function setPlayerPoints(slug: string, playerId: string, points: number): Promise<ActionResult> {
+  if (!(await requireAdmin(slug))) return { ok: false, message: "Masuk sebagai pengelola dulu." };
+  if (!Number.isInteger(points) || points < -999 || points > 999) {
+    return { ok: false, message: "Poin harus angka bulat." };
+  }
+
+  const tournament = await getTournamentBySlug(slug);
+  if (!tournament) return { ok: false, message: "Turnamen tidak ditemukan." };
+  if (tournament.status === "finished") return { ok: false, message: "Turnamen sudah selesai." };
+
+  const db = getDb();
+  const updated = await db
+    .update(players)
+    .set({ pointAdjustment: points })
+    .where(and(eq(players.id, playerId), eq(players.tournamentId, tournament.id)))
+    .returning({ id: players.id });
+  if (updated.length === 0) return { ok: false, message: "Pemain tidak ditemukan." };
+  return okWithSnapshot(slug, "Poin diperbarui.");
+}
+
 export async function updateCourtCount(slug: string, courtCount: number): Promise<ActionResult> {
   if (!(await requireAdmin(slug))) return { ok: false, message: "Masuk sebagai pengelola dulu." };
   if (!Number.isInteger(courtCount) || courtCount < 1 || courtCount > 12) {
