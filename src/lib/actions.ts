@@ -41,6 +41,14 @@ function parseScheduleMode(value: string): ScheduleMode | null {
   return SCHEDULE_MODES.includes(value as ScheduleMode) ? (value as ScheduleMode) : null;
 }
 
+function parsePointAdjustment(value: string): number | null {
+  if (value === "") return 0;
+  if (!/^-?\d+$/.test(value)) return null;
+  const points = Number(value);
+  if (points < -999 || points > 999) return null;
+  return points;
+}
+
 export type ActionResult =
   | { ok: true; message?: string; snapshot?: ClientSnapshot }
   | { ok: false; message: string };
@@ -347,6 +355,7 @@ export async function createTournament(
   const scheduleMode = parseScheduleMode(String(formData.get("scheduleMode") ?? "continuous"));
   const playerNames = formData.getAll("playerName").map((value) => String(value).trim());
   const lateFlags = formData.getAll("playerLate").map((value) => String(value) === "1");
+  const pointValues = formData.getAll("playerPoints").map((value) => String(value).trim());
 
   if (name.length < 3) {
     return { ok: false as const, message: "Nama turnamen minimal 3 karakter." };
@@ -368,8 +377,13 @@ export async function createTournament(
     .map((playerName, index) => ({
       name: playerName,
       isLate: scheduleMode === "full" ? false : (lateFlags[index] ?? false),
+      pointAdjustment: parsePointAdjustment(pointValues[index] ?? "0"),
     }))
     .filter((player) => player.name.length > 0);
+
+  if (roster.some((player) => player.pointAdjustment === null)) {
+    return { ok: false as const, message: "Poin penyesuaian harus angka bulat." };
+  }
 
   if (roster.length < 4) {
     return { ok: false as const, message: "Minimal 4 pemain." };
@@ -396,6 +410,7 @@ export async function createTournament(
       name: player.name,
       present: !player.isLate,
       isLate: player.isLate,
+      pointAdjustment: player.pointAdjustment ?? 0,
     })),
   );
 
