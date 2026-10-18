@@ -60,6 +60,12 @@ export function isValidAmericanoScore(teamAScore: number, teamBScore: number, po
   return teamAScore + teamBScore === pointsPerMatch;
 }
 
+function isAdjustmentMap(
+  value: ReadonlyMap<string, number> | Record<string, number>,
+): value is ReadonlyMap<string, number> {
+  return value instanceof Map;
+}
+
 export function computeStandings(
   playerIds: string[],
   matches: CompletedMatch[],
@@ -67,7 +73,7 @@ export function computeStandings(
 ): StandingRow[] {
   const rows = new Map(playerIds.map((id) => [id, emptyRow(id)]));
   const adjustmentFor = (id: string) =>
-    adjustments instanceof Map ? (adjustments.get(id) ?? 0) : (adjustments[id] ?? 0);
+    isAdjustmentMap(adjustments) ? (adjustments.get(id) ?? 0) : (adjustments[id] ?? 0);
 
   for (const id of playerIds) {
     const row = rows.get(id);
