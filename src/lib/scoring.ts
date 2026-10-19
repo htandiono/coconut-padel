@@ -54,6 +54,33 @@ function h2hPoints(
   return score;
 }
 
+const POINT_MIN = -999;
+const POINT_MAX = 999;
+
+export function sanitizePointDraft(value: string): string {
+  const normalized = value.replace(/[−–—]/g, "-").replace(/\s+/g, "");
+  return normalized.match(/^-?\d{0,3}/)?.[0] ?? "";
+}
+
+export function togglePointSign(value: string): string {
+  const draft = sanitizePointDraft(value);
+  if (draft.startsWith("-")) {
+    const rest = draft.slice(1);
+    return rest.length > 0 ? rest : "0";
+  }
+  if (draft === "" || draft === "0") return "-";
+  return `-${draft}`;
+}
+
+export function parsePointAdjustment(value: string): number | null {
+  const draft = sanitizePointDraft(value.trim());
+  if (draft === "") return 0;
+  if (!/^-?\d+$/.test(draft)) return null;
+  const points = Number(draft);
+  if (!Number.isInteger(points) || points < POINT_MIN || points > POINT_MAX) return null;
+  return points;
+}
+
 export function isValidAmericanoScore(teamAScore: number, teamBScore: number, pointsPerMatch: number) {
   if (!Number.isInteger(teamAScore) || !Number.isInteger(teamBScore)) return false;
   if (teamAScore < 0 || teamBScore < 0) return false;

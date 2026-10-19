@@ -14,9 +14,11 @@ import {
   updateScheduleMode,
   type ActionResult,
 } from "@/lib/actions";
+import { parsePointAdjustment } from "@/lib/scoring";
 import type { ClientMatch, ClientSnapshot } from "@/lib/snapshot";
 import { useLiveSnapshot } from "@/lib/use-live-snapshot";
 import { BrandHeader } from "@/components/brand-header";
+import { PointAdjustmentInput } from "@/components/point-adjustment-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -781,28 +783,24 @@ function PointInput({
     setDraft(String(value));
   }, [value]);
 
-  function commit() {
-    const trimmed = draft.trim();
-    if (!/^-?\d+$/.test(trimmed)) {
-      setDraft(String(value));
+  function commit(next: string, revertInvalid: boolean) {
+    const parsed = parsePointAdjustment(next);
+    if (parsed === null) {
+      if (revertInvalid) setDraft(String(value));
       return;
     }
-    const parsed = Number(trimmed);
+    setDraft(String(parsed));
     if (parsed !== value) onSave(parsed);
   }
 
   return (
-    <Input
-      aria-label="Poin"
-      inputMode="numeric"
+    <PointAdjustmentInput
+      label="Poin"
       value={draft}
       disabled={disabled}
-      className="h-8 w-16 px-2 text-center tabular-nums"
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") event.currentTarget.blur();
-      }}
+      onValueChange={setDraft}
+      onBlur={() => commit(draft, true)}
+      onCommit={(next) => commit(next, false)}
     />
   );
 }
@@ -963,7 +961,7 @@ function PlayersPanel({
             <TableHeader>
               <TableRow>
                 <TableHead>Pemain</TableHead>
-                <TableHead className="w-20 text-center">Poin</TableHead>
+                <TableHead className="w-28 text-center">Poin</TableHead>
                 <TableHead className="w-16 text-center">Match</TableHead>
                 <TableHead className="w-28 text-center">Status</TableHead>
               </TableRow>

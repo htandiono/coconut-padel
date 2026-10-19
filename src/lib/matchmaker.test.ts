@@ -9,7 +9,7 @@ import {
   statusesForBatch,
   type PastMatch,
 } from "./matchmaker";
-import { computeStandings, isValidAmericanoScore } from "./scoring";
+import { computeStandings, isValidAmericanoScore, parsePointAdjustment, sanitizePointDraft, togglePointSign } from "./scoring";
 
 describe("americano scoring", () => {
   it("menerima skor yang jumlahnya sama dengan poin pertandingan", () => {
@@ -32,6 +32,17 @@ describe("americano scoring", () => {
     expect(standings.find((row) => row.playerId === "b")?.points).toBe(30);
     expect(standings.find((row) => row.playerId === "c")?.points).toBe(18);
     expect(standings.find((row) => row.playerId === "d")?.points).toBe(22);
+  });
+
+  it("menerima poin penyesuaian minus", () => {
+    expect(sanitizePointDraft("−4")).toBe("-4");
+    expect(togglePointSign("4")).toBe("-4");
+    expect(togglePointSign("-4")).toBe("4");
+    expect(togglePointSign("0")).toBe("-");
+    expect(parsePointAdjustment("-4")).toBe(-4);
+    expect(parsePointAdjustment("−8")).toBe(-8);
+    expect(parsePointAdjustment("-")).toBeNull();
+    expect(parsePointAdjustment("")).toBe(0);
   });
 
   it("menambahkan poin penyesuaian ke total klasemen", () => {

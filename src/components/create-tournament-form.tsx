@@ -4,6 +4,7 @@ import { useActionState, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { cn } from "cn";
 import { createTournament, type ActionResult } from "@/lib/actions";
+import { PointAdjustmentInput } from "@/components/point-adjustment-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -138,11 +139,11 @@ function PlayerTable({
     "grid items-center gap-x-2",
     fullRound
       ? removable
-        ? "grid-cols-[minmax(0,1fr)_4.5rem_2rem]"
-        : "grid-cols-[minmax(0,1fr)_4.5rem]"
+        ? "grid-cols-[minmax(0,1fr)_6.5rem_2rem]"
+        : "grid-cols-[minmax(0,1fr)_6.5rem]"
       : removable
-        ? "grid-cols-[minmax(0,1fr)_4.5rem_auto_2rem]"
-        : "grid-cols-[minmax(0,1fr)_4.5rem_auto]",
+        ? "grid-cols-[minmax(0,1fr)_6.5rem_auto_2rem]"
+        : "grid-cols-[minmax(0,1fr)_6.5rem_auto]",
   );
 
   return (
@@ -166,13 +167,11 @@ function PlayerTable({
             className="min-w-0"
             onChange={(event) => onChange(player.id, { name: event.target.value })}
           />
-          <Input
+          <PointAdjustmentInput
             name="playerPoints"
-            aria-label={`Poin pemain ${index + 1}`}
-            inputMode="numeric"
+            label={`Poin pemain ${index + 1}`}
             value={player.points}
-            className="px-2 text-center tabular-nums"
-            onChange={(event) => onChange(player.id, { points: event.target.value })}
+            onValueChange={(points) => onChange(player.id, { points })}
           />
           <input className="hidden" type="hidden" name="playerLate" value={!fullRound && player.late ? "1" : "0"} />
           {fullRound ? null : (

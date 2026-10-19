@@ -24,7 +24,7 @@ import {
   statusesForBatch,
   type ScheduleMode,
 } from "@/lib/matchmaker";
-import { isValidAmericanoScore } from "@/lib/scoring";
+import { isValidAmericanoScore, parsePointAdjustment } from "@/lib/scoring";
 import {
   getTournamentBySlug,
   getTournamentSnapshot,
@@ -39,14 +39,6 @@ const SCHEDULE_MODES = ["continuous", "full"] as const;
 
 function parseScheduleMode(value: string): ScheduleMode | null {
   return SCHEDULE_MODES.includes(value as ScheduleMode) ? (value as ScheduleMode) : null;
-}
-
-function parsePointAdjustment(value: string): number | null {
-  if (value === "") return 0;
-  if (!/^-?\d+$/.test(value)) return null;
-  const points = Number(value);
-  if (points < -999 || points > 999) return null;
-  return points;
 }
 
 export type ActionResult =
@@ -382,7 +374,7 @@ export async function createTournament(
     .filter((player) => player.name.length > 0);
 
   if (roster.some((player) => player.pointAdjustment === null)) {
-    return { ok: false as const, message: "Poin penyesuaian harus angka bulat." };
+    return { ok: false as const, message: "Poin penyesuaian harus bilangan bulat dari -999 sampai 999." };
   }
 
   if (roster.length < 4) {
@@ -480,7 +472,7 @@ export async function setPlayerArrival(slug: string, playerId: string, present: 
 export async function setPlayerPoints(slug: string, playerId: string, points: number): Promise<ActionResult> {
   if (!(await requireAdmin(slug))) return { ok: false, message: "Masuk sebagai pengelola dulu." };
   if (!Number.isInteger(points) || points < -999 || points > 999) {
-    return { ok: false, message: "Poin harus angka bulat." };
+    return { ok: false, message: "Poin harus bilangan bulat dari -999 sampai 999." };
   }
 
   const tournament = await getTournamentBySlug(slug);
