@@ -139,11 +139,11 @@ function PlayerTable({
     "grid items-center gap-x-2",
     fullRound
       ? removable
-        ? "grid-cols-[minmax(0,1fr)_6.5rem_2rem]"
-        : "grid-cols-[minmax(0,1fr)_6.5rem]"
+        ? "grid-cols-[minmax(0,1fr)_4.5rem_2rem]"
+        : "grid-cols-[minmax(0,1fr)_4.5rem]"
       : removable
-        ? "grid-cols-[minmax(0,1fr)_6.5rem_auto_2rem]"
-        : "grid-cols-[minmax(0,1fr)_6.5rem_auto]",
+        ? "grid-cols-[minmax(0,1fr)_4.5rem_auto_2rem]"
+        : "grid-cols-[minmax(0,1fr)_4.5rem_auto]",
   );
 
   return (

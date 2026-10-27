@@ -783,10 +783,10 @@ function PointInput({
     setDraft(String(value));
   }, [value]);
 
-  function commit(next: string, revertInvalid: boolean) {
-    const parsed = parsePointAdjustment(next);
+  function commit() {
+    const parsed = parsePointAdjustment(draft);
     if (parsed === null) {
-      if (revertInvalid) setDraft(String(value));
+      setDraft(String(value));
       return;
     }
     setDraft(String(parsed));
@@ -799,8 +799,7 @@ function PointInput({
       value={draft}
       disabled={disabled}
       onValueChange={setDraft}
-      onBlur={() => commit(draft, true)}
-      onCommit={(next) => commit(next, false)}
+      onBlur={commit}
     />
   );
 }
@@ -961,7 +960,7 @@ function PlayersPanel({
             <TableHeader>
               <TableRow>
                 <TableHead>Pemain</TableHead>
-                <TableHead className="w-28 text-center">Poin</TableHead>
+                <TableHead className="w-20 text-center">Poin</TableHead>
                 <TableHead className="w-16 text-center">Match</TableHead>
                 <TableHead className="w-28 text-center">Status</TableHead>
               </TableRow>

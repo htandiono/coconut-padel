@@ -62,16 +62,6 @@ export function sanitizePointDraft(value: string): string {
   return normalized.match(/^-?\d{0,3}/)?.[0] ?? "";
 }
 
-export function togglePointSign(value: string): string {
-  const draft = sanitizePointDraft(value);
-  if (draft.startsWith("-")) {
-    const rest = draft.slice(1);
-    return rest.length > 0 ? rest : "0";
-  }
-  if (draft === "" || draft === "0") return "-";
-  return `-${draft}`;
-}
-
 export function parsePointAdjustment(value: string): number | null {
   const draft = sanitizePointDraft(value.trim());
   if (draft === "") return 0;
