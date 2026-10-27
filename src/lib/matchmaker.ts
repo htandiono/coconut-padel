@@ -51,27 +51,64 @@ function pairingsOfFour(
   ];
 }
 
-function pairingCost(
+function square(count: number) {
+  return count * count;
+}
+
+function relation(partners: Counts, opponents: Counts, a: string, b: string) {
+  return { partner: getCount(partners, a, b), opponent: getCount(opponents, a, b) };
+}
+
+function pairingLoad(
   teamA: [string, string],
   teamB: [string, string],
   partners: Counts,
   opponents: Counts,
 ) {
-  // Kuadrat: yang belum pernah ketemu selalu menang, dan kalau repeat
-  // tak terhindarkan, repeat disebar ke pasangan atau lawan yang
-  // jumlahnya paling sedikit.
-  const square = (count: number) => count * count;
-  const partnerRepeats =
-    square(getCount(partners, teamA[0], teamA[1])) +
-    square(getCount(partners, teamB[0], teamB[1]));
-  const opponentRepeats =
-    square(getCount(opponents, teamA[0], teamB[0])) +
-    square(getCount(opponents, teamA[0], teamB[1])) +
-    square(getCount(opponents, teamA[1], teamB[0])) +
-    square(getCount(opponents, teamA[1], teamB[1]));
-  // Rekan masih didahulukan, tapi lawan yang jarang ketemu cukup kuat
-  // untuk mengalahkan pasangan baru kalau lawannya sudah sering bentrok.
-  return partnerRepeats * 50 + opponentRepeats * 30;
+  // Urutan: jangan ulang rekan, lalu jangan satu lapangan lagi dengan
+  // orang yang sama, baru setelah itu sebar lawan. Kuadrat menyebar
+  // repeat ke pasangan yang paling jarang.
+  let partner = 0;
+  let shared = 0;
+  let opponent = 0;
+  const add = (a: string, b: string, role: "partner" | "opponent") => {
+    const seen = relation(partners, opponents, a, b);
+    if (role === "partner") partner += square(seen.partner);
+    else opponent += square(seen.opponent);
+    shared += square(seen.partner + seen.opponent);
+  };
+  add(teamA[0], teamA[1], "partner");
+  add(teamB[0], teamB[1], "partner");
+  add(teamA[0], teamB[0], "opponent");
+  add(teamA[0], teamB[1], "opponent");
+  add(teamA[1], teamB[0], "opponent");
+  add(teamA[1], teamB[1], "opponent");
+  return { partner, shared, opponent };
+}
+
+function compareKeys(a: number[], b: number[]) {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
+
+function combinations<T>(items: T[], count: number): T[][] {
+  if (count === 0) return [[]];
+  if (items.length < count) return [];
+  const [head, ...tail] = items;
+  const withHead = combinations(tail, count - 1).map((rest) => [head, ...rest]);
+  return [...withHead, ...combinations(tail, count)];
+}
+
+function combinationCount(total: number, count: number) {
+  if (count < 0 || count > total) return 0;
+  const pick = Math.min(count, total - count);
+  let result = 1;
+  for (let index = 1; index <= pick; index += 1) {
+    result = (result * (total - pick + index)) / index;
+  }
+  return result;
 }
 
 function buildHistory(pastMatches: PastMatch[]) {
@@ -120,68 +157,155 @@ function chooseBestPairing(
   ids: [string, string, string, string],
   partners: Counts,
   opponents: Counts,
+  roundNumber: number,
 ) {
   let best = pairingsOfFour(ids)[0];
-  let bestCost = Infinity;
+  let bestKey = [Infinity, Infinity, Infinity, Infinity];
   for (const pairing of pairingsOfFour(ids)) {
-    const cost = pairingCost(pairing.teamA, pairing.teamB, partners, opponents);
-    if (cost < bestCost) {
+    const load = pairingLoad(pairing.teamA, pairing.teamB, partners, opponents);
+    const label = [pairing.teamA, pairing.teamB]
+      .map((team) => [...team].sort().join("-"))
+      .sort()
+      .join("|");
+    const key = [load.partner, load.shared, load.opponent, hashTie(label, roundNumber)];
+    if (compareKeys(key, bestKey) < 0) {
       best = pairing;
-      bestCost = cost;
+      bestKey = key;
     }
   }
-  return best;
+  return { ...best, partner: bestKey[0], shared: bestKey[1], opponent: bestKey[2] };
 }
 
-function pickCourt(
-  remaining: string[],
+function assignCourts(
+  players: string[],
+  partners: Counts,
+  opponents: Counts,
+  roundNumber: number,
+): { matches: GeneratedMatch[]; partner: number; shared: number; opponent: number } {
+  const search = (
+    remaining: string[],
+    court: number,
+  ): { matches: GeneratedMatch[]; partner: number; shared: number; opponent: number } => {
+    if (remaining.length === 0) return { matches: [], partner: 0, shared: 0, opponent: 0 };
+    const seed = remaining[0];
+    const rest = remaining.slice(1);
+    let best: { matches: GeneratedMatch[]; partner: number; shared: number; opponent: number } | null =
+      null;
+    let bestKey = [Infinity, Infinity, Infinity, Infinity];
+
+    for (const extra of combinations(rest, 3)) {
+      const quartet = [seed, extra[0], extra[1], extra[2]] as [string, string, string, string];
+      const pairing = chooseBestPairing(quartet, partners, opponents, roundNumber);
+      const used = new Set(quartet);
+      const next = search(
+        remaining.filter((id) => !used.has(id)),
+        court + 1,
+      );
+      const key = [
+        pairing.partner + next.partner,
+        pairing.shared + next.shared,
+        pairing.opponent + next.opponent,
+        hashTie(`${quartet.slice().sort().join("-")}/${court}`, roundNumber),
+      ];
+      if (!best || compareKeys(key, bestKey) < 0) {
+        best = {
+          matches: [{ court, teamA: pairing.teamA, teamB: pairing.teamB }, ...next.matches],
+          partner: pairing.partner + next.partner,
+          shared: pairing.shared + next.shared,
+          opponent: pairing.opponent + next.opponent,
+        };
+        bestKey = key;
+      }
+    }
+
+    if (!best) throw new Error("Tidak cukup pemain untuk membentuk pertandingan.");
+    return best;
+  };
+
+  return search([...players].sort(), 1);
+}
+
+function familiarity(
+  id: string,
+  others: string[],
+  partners: Counts,
+  opponents: Counts,
+) {
+  return others.reduce((sum, other) => {
+    const seen = relation(partners, opponents, id, other);
+    return sum + square(seen.partner) * 100 + square(seen.partner + seen.opponent) * 10 + square(seen.opponent);
+  }, 0);
+}
+
+function pickByHistory(
+  must: string[],
+  tied: string[],
+  need: number,
+  partners: Counts,
+  opponents: Counts,
+  roundNumber: number,
+) {
+  const chosen = [...must];
+  const rest = [...tied];
+  const picked: string[] = [];
+  while (picked.length < need) {
+    rest.sort(
+      (a, b) =>
+        familiarity(a, chosen, partners, opponents) - familiarity(b, chosen, partners, opponents) ||
+        hashTie(a, roundNumber) - hashTie(b, roundNumber),
+    );
+    const next = rest.shift();
+    if (!next) break;
+    picked.push(next);
+    chosen.push(next);
+  }
+  return picked;
+}
+
+function planMatches(
+  pool: string[],
+  courtCount: number,
   matchesPlayed: Map<string, number>,
   partners: Counts,
   opponents: Counts,
-): { teamA: [string, string]; teamB: [string, string]; used: string[] } {
-  if (remaining.length === 4) {
-    const pairing = chooseBestPairing(
-      remaining as [string, string, string, string],
-      partners,
-      opponents,
-    );
-    return { ...pairing, used: remaining };
-  }
+  roundNumber: number,
+) {
+  const courts = Math.min(courtCount, Math.floor(pool.length / 4));
+  const slots = courts * 4;
+  const played = (id: string) => matchesPlayed.get(id) ?? 0;
+  const ranked = [...pool].sort((a, b) => played(a) - played(b) || hashTie(a, roundNumber) - hashTie(b, roundNumber));
+  const cutoff = played(ranked[slots - 1]);
+  const must = ranked.filter((id) => played(id) < cutoff);
+  const tied = ranked.filter((id) => played(id) === cutoff);
+  const need = slots - must.length;
+  const groups =
+    combinationCount(tied.length, need) > 4000
+      ? [pickByHistory(must, tied, need, partners, opponents, roundNumber)]
+      : combinations(tied, need);
 
-  const seed = remaining[0];
-  const others = remaining.slice(1);
-  let best: { teamA: [string, string]; teamB: [string, string]; used: string[] } | null =
-    null;
-  let bestScore = Infinity;
-
-  for (let i = 0; i < others.length; i += 1) {
-    for (let j = i + 1; j < others.length; j += 1) {
-      for (let k = j + 1; k < others.length; k += 1) {
-        const quartet: [string, string, string, string] = [
-          seed,
-          others[i],
-          others[j],
-          others[k],
-        ];
-        const pairing = chooseBestPairing(quartet, partners, opponents);
-        const partnerOfSeed = pairing.teamA.includes(seed)
-          ? pairing.teamA.find((id) => id !== seed)!
-          : pairing.teamB.find((id) => id !== seed)!;
-        const mixBonus = -(matchesPlayed.get(partnerOfSeed) ?? 0);
-        const score =
-          pairingCost(pairing.teamA, pairing.teamB, partners, opponents) + mixBonus;
-        if (score < bestScore) {
-          bestScore = score;
-          best = { ...pairing, used: quartet };
-        }
-      }
+  let best: { matches: GeneratedMatch[]; playing: string[] } | null = null;
+  let bestKey = [Infinity, Infinity, Infinity, Infinity];
+  for (const chosen of groups) {
+    const playing = [...must, ...chosen];
+    const assigned = assignCourts(playing, partners, opponents, roundNumber);
+    const key = [
+      assigned.partner,
+      assigned.shared,
+      assigned.opponent,
+      hashTie([...playing].sort().join(","), roundNumber),
+    ];
+    if (!best || compareKeys(key, bestKey) < 0) {
+      best = { matches: assigned.matches, playing };
+      bestKey = key;
     }
   }
 
-  if (!best) {
-    throw new Error("Tidak cukup pemain untuk membentuk pertandingan.");
-  }
-  return best;
+  if (!best) throw new Error("Tidak cukup pemain untuk membentuk pertandingan.");
+  const playing = new Set(best.playing);
+  return {
+    matches: best.matches,
+    sittingOut: pool.filter((id) => !playing.has(id)),
+  };
 }
 
 export function generateRound(input: {
@@ -198,34 +322,7 @@ export function generateRound(input: {
   }
 
   const { partners, opponents, matchesPlayed } = buildHistory(input.pastMatches);
-  const slots = courtsThisRound * 4;
-
-  const ranked = [...present].sort((a, b) => {
-    const playDiff = (matchesPlayed.get(a) ?? 0) - (matchesPlayed.get(b) ?? 0);
-    if (playDiff !== 0) return playDiff;
-    return hashTie(a, input.roundNumber) - hashTie(b, input.roundNumber);
-  });
-
-  const playing = ranked.slice(0, slots);
-  const sittingOut = ranked.slice(slots);
-  const remaining = [...playing];
-  const matches: GeneratedMatch[] = [];
-
-  for (let court = 1; court <= courtsThisRound; court += 1) {
-    remaining.sort((a, b) => {
-      const playDiff = (matchesPlayed.get(a) ?? 0) - (matchesPlayed.get(b) ?? 0);
-      if (playDiff !== 0) return playDiff;
-      return hashTie(a, input.roundNumber + court) - hashTie(b, input.roundNumber + court);
-    });
-    const picked = pickCourt(remaining, matchesPlayed, partners, opponents);
-    matches.push({ court, teamA: picked.teamA, teamB: picked.teamB });
-    for (const id of picked.used) {
-      const index = remaining.indexOf(id);
-      if (index >= 0) remaining.splice(index, 1);
-    }
-  }
-
-  return { matches, sittingOut };
+  return planMatches(present, courtsThisRound, matchesPlayed, partners, opponents, input.roundNumber);
 }
 
 /** Ronde terjadwal yang dijaga di depan ronde yang sedang dimainkan. */

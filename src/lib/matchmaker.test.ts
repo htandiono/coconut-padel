@@ -9,7 +9,7 @@ import {
   statusesForBatch,
   type PastMatch,
 } from "./matchmaker";
-import { computeStandings, isValidAmericanoScore, parsePointAdjustment, sanitizePointDraft, togglePointSign } from "./scoring";
+import { computeStandings, isValidAmericanoScore, parsePointAdjustment, sanitizePointDraft } from "./scoring";
 
 describe("americano scoring", () => {
   it("menerima skor yang jumlahnya sama dengan poin pertandingan", () => {
@@ -36,9 +36,7 @@ describe("americano scoring", () => {
 
   it("menerima poin penyesuaian minus", () => {
     expect(sanitizePointDraft("−4")).toBe("-4");
-    expect(togglePointSign("4")).toBe("-4");
-    expect(togglePointSign("-4")).toBe("4");
-    expect(togglePointSign("0")).toBe("-");
+    expect(sanitizePointDraft("-4")).toBe("-4");
     expect(parsePointAdjustment("-4")).toBe(-4);
     expect(parsePointAdjustment("−8")).toBe(-8);
     expect(parsePointAdjustment("-")).toBeNull();
@@ -270,7 +268,7 @@ describe("americano matchmaker", () => {
     expect(teams).toContain("b-c");
   });
 
-  it("menghadapi lawan yang jarang ketemu meski harus mengulang pasangan", () => {
+  it("tidak mengulang partner hanya karena lawannya sudah sering ketemu", () => {
     const past: PastMatch[] = [{ teamA: ["a", "c"], teamB: ["b", "d"] }];
     for (let index = 0; index < 2; index += 1) {
       past.push({ teamA: ["a", "x"], teamB: ["c", "y"] });
@@ -286,9 +284,80 @@ describe("americano matchmaker", () => {
     const teams = [next.matches[0].teamA, next.matches[0].teamB].map((team) =>
       [...team].sort().join("-"),
     );
-    // a-c dan b-d sudah sering jadi lawan. Lebih rata kalau mereka sepasangan,
-    // lalu masing-masing menghadapi orang yang belum sering ditemui.
-    expect(teams).toContain("a-c");
-    expect(teams).toContain("b-d");
+    // a-c dan b-d sudah sering jadi lawan, tapi mereka belum separtner
+    // dengan yang lain. Partner baru tetap didahulukan.
+    expect(teams).not.toContain("a-c");
+    expect(teams).not.toContain("b-d");
+    expect(teams).toHaveLength(2);
+  });
+
+  it("17 pemain di 2 lapangan belum mengulang pasangan atau lawan pada 9 pertandingan pertama", () => {
+    const ids = Array.from({ length: 17 }, (_, index) => `p${index + 1}`);
+    const past: PastMatch[] = [];
+    const active: Array<PastMatch | null> = [null, null];
+    let seq = 0;
+    const started: Array<{ match: PastMatch; seq: number }> = [];
+    const partner = new Map<string, number>();
+    const opponent = new Map<string, number>();
+    const together = new Map<string, number>();
+    const key = (a: string, b: string) => [a, b].sort().join("-");
+    const bump = (map: Map<string, number>, a: string, b: string) => map.set(key(a, b), (map.get(key(a, b)) ?? 0) + 1);
+
+    for (let tick = 0; started.length < 9 && tick < 80; tick += 1) {
+      const busy = new Set(active.filter((match) => match).flatMap((match) => [...match!.teamA, ...match!.teamB]));
+      const free = ids.filter((id) => !busy.has(id));
+      const empty = active.flatMap((match, index) => (match ? [] : [index]));
+      if (empty.length > 0 && free.length >= 4) {
+        const generated = generateRound({
+          players: free.map((id) => ({ id, present: true })),
+          courtCount: empty.length,
+          pastMatches: [...past, ...active.filter((match): match is PastMatch => match !== null)],
+          roundNumber: tick + 1,
+        });
+        generated.matches.forEach((match, index) => {
+          const stored = { teamA: match.teamA, teamB: match.teamB };
+          active[empty[index]] = stored;
+          started.push({ match: stored, seq: seq += 1 });
+          bump(partner, match.teamA[0], match.teamA[1]);
+          bump(partner, match.teamB[0], match.teamB[1]);
+          for (const a of match.teamA) for (const b of match.teamB) bump(opponent, a, b);
+          const four = [...match.teamA, ...match.teamB];
+          for (let left = 0; left < four.length; left += 1) {
+            for (let right = left + 1; right < four.length; right += 1) bump(together, four[left], four[right]);
+          }
+        });
+      } else {
+        const playing = active.map((match, index) => ({ match, index })).filter((slot) => slot.match);
+        const oldest = started.filter((item) => active.includes(item.match)).sort((a, b) => a.seq - b.seq)[0];
+        if (!oldest || playing.length === 0) break;
+        const court = active.indexOf(oldest.match);
+        past.push(oldest.match);
+        active[court] = null;
+      }
+    }
+
+    expect(Math.max(...partner.values())).toBe(1);
+    expect(Math.max(...opponent.values())).toBe(1);
+    expect(Math.max(...together.values())).toBe(1);
+  });
+
+  it("mendudukkan pemain yang sudah separtner, bukan yang masih membuka pasangan baru", () => {
+    const past: PastMatch[] = [
+      { teamA: ["a", "b"], teamB: ["c", "d"] },
+      { teamA: ["a", "c"], teamB: ["b", "d"] },
+      { teamA: ["a", "d"], teamB: ["b", "c"] },
+      { teamA: ["e", "x"], teamB: ["y", "z"] },
+      { teamA: ["e", "y"], teamB: ["x", "z"] },
+      { teamA: ["e", "z"], teamB: ["x", "y"] },
+    ];
+    const next = generateRound({
+      players: ["a", "b", "c", "d", "e"].map((id) => ({ id, present: true })),
+      courtCount: 1,
+      pastMatches: past,
+      roundNumber: 7,
+    });
+    const playing = [...next.matches[0].teamA, ...next.matches[0].teamB];
+    expect(playing).toContain("e");
+    expect(next.sittingOut).not.toContain("e");
   });
 });
